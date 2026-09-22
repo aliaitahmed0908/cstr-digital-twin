@@ -27,6 +27,7 @@ export default function App() {
   const [activePreset, setActivePreset] = useState<PresetKey | null>(null);
   const [cutawayOn, setCutawayOn] = useState(false);
   const [esdActive, setEsdActive] = useState(false);
+  const [esdResetPermitted, setEsdResetPermitted] = useState(false);
   const [faulted, setFaulted] = useState(false);
 
   const liveTempRef = useRef(350);
@@ -52,7 +53,12 @@ export default function App() {
       lastTimeRef.current = now;
       const simMinutesPerSecond = 0.5;
 
-      if (autoModeRef.current) {
+      // While the ESD is latched, the controller must not keep computing
+      // and writing new Tc commands — that value gets applied the instant
+      // the trip is acknowledged, so if auto mode were left running against
+      // a hot measured T, it would just windup toward max heat and slam
+      // the reactor right back into another trip.
+      if (autoModeRef.current && !engine.isEsdTripped()) {
         const dtMinutes = dtSeconds * simMinutesPerSecond;
         const { T } = engine.getState();
         const newTc = controller.compute(setpointRef.current, T, dtMinutes);
@@ -66,6 +72,7 @@ export default function App() {
       liveCaRef.current = Ca;
       setTelemetry({ Ca, Cb, T, simTime: engine.getTime() });
       setEsdActive(engine.isEsdTripped());
+      setEsdResetPermitted(engine.isEsdResetPermitted());
       setFaulted(engine.isFaulted());
       rafRef.current = requestAnimationFrame(loop);
     };
@@ -116,6 +123,22 @@ export default function App() {
     engineRef.current.setTc(300);
     setTc(300);
     setFaulted(false);
+    setEsdActive(false);
+  };
+
+  /** Operator acknowledgment: only takes effect once temperature has
+   *  genuinely fallen below the reset threshold (engine enforces this).
+   *  Also pulls the setpoint back to a safe value and drops out of auto
+   *  mode, so acknowledging doesn't immediately walk the reactor back into
+   *  the same trip condition that caused the shutdown. */
+  const handleAcknowledgeEsd = () => {
+    const cleared = engineRef.current.acknowledgeEsd();
+    if (cleared) {
+      setAutoMode(false);
+      engineRef.current.setTc(300);
+      setTc(300);
+      setEsdActive(false);
+    }
   };
 
   const handlePresetToggle = (key: PresetKey) => {
@@ -224,7 +247,7 @@ export default function App() {
           {esdActive && !faulted && (
             <div style={{ display: "flex", alignItems: "center", fontSize: 11.5, color: "#ff5548", fontWeight: 700 }}>
               <span className="status-dot" style={{ background: "#ff5548" }} />
-              ESD TRIPPED
+              ESD LATCHED
             </div>
           )}
           {autoMode && !esdActive && !faulted && (
@@ -296,14 +319,36 @@ export default function App() {
             fontWeight: 700,
             display: "flex",
             alignItems: "center",
+            justifyContent: "space-between",
             gap: 10,
             letterSpacing: 0.3,
             flexShrink: 0,
           }}
         >
-          <span style={{ fontSize: 16 }}>⚠</span>
-          EMERGENCY SHUTDOWN ACTIVE — Tc forced to minimum (250 K) until reactor temperature falls below 415 K.
-          Manual and auto control are locked out.
+          <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <span style={{ fontSize: 16 }}>⚠</span>
+            EMERGENCY SHUTDOWN LATCHED — Tc forced to minimum (250 K).{" "}
+            {esdResetPermitted
+              ? "Temperature has fallen below 415 K — safe to acknowledge."
+              : `Waiting for T to fall below 415 K (currently ${telemetry.T.toFixed(1)} K).`}
+          </span>
+          <button
+            onClick={handleAcknowledgeEsd}
+            disabled={!esdResetPermitted}
+            style={{
+              padding: "5px 12px",
+              borderRadius: 6,
+              border: esdResetPermitted ? "1px solid #34d399" : "1px solid #5b6577",
+              background: "transparent",
+              color: esdResetPermitted ? "#34d399" : "#5b6577",
+              fontSize: 12,
+              fontWeight: 700,
+              cursor: esdResetPermitted ? "pointer" : "not-allowed",
+              whiteSpace: "nowrap",
+            }}
+          >
+            Acknowledge &amp; Resume
+          </button>
         </div>
       )}
 
@@ -425,7 +470,7 @@ export default function App() {
               >
                 {faulted
                   ? "Numerical fault — use Reset Reactor above to recover"
-                  : "ESD interlock active — controls locked until T ≤ 415 K"}
+                  : "ESD latched — use Acknowledge & Resume above once T ≤ 415 K"}
               </div>
             )}
 

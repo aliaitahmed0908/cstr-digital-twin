@@ -49,8 +49,12 @@ type DisturbanceKind = "Tf" | "F";
 // ESD (Emergency Shutdown) interlock thresholds. Independent of the PI
 // controller and the manual Tc slider — this models a Safety Instrumented
 // System that overrides normal control the moment temperature crosses a
-// hard limit, and only releases control back once temperature has fallen
-// well below that limit (hysteresis prevents rapid trip/reset chatter).
+// hard limit. This is a LATCHING interlock, matching real SIS design: it
+// does not auto-release the instant temperature dips back under the reset
+// threshold, because doing so (with the underlying unsafe setpoint still
+// in effect) just produces a trip/release/re-trip limit cycle. Instead the
+// operator must explicitly acknowledge, and only once T has genuinely
+// fallen below the reset threshold.
 const ESD_TRIP_TEMP = 440;
 const ESD_RESET_TEMP = 415;
 
@@ -77,7 +81,7 @@ export class CSTREngine {
   private tfMagnitude = 40;
   private flowMagnitude = 40;
 
-  private esdTripped = false;
+  private esdLatched = false;
   private faulted = false;
 
   constructor(initialCa = 0.5, initialT = 350, params: CSTRParams = defaultParams) {
@@ -115,7 +119,7 @@ export class CSTREngine {
     this.state[1] = 0;
     this.state[2] = T;
     this.simTime = 0;
-    this.esdTripped = false;
+    this.esdLatched = false;
     this.faulted = false;
   }
 
@@ -132,9 +136,29 @@ export class CSTREngine {
     return this.tfDisturbanceOn || this.flowDisturbanceOn;
   }
 
-  /** True while the ESD interlock is actively overriding Tc. */
+  /** True while the ESD interlock is latched and overriding Tc. Stays true
+   *  even after temperature drops back under the reset threshold — it only
+   *  clears via an explicit acknowledgeEsd() call. */
   isEsdTripped(): boolean {
-    return this.esdTripped;
+    return this.esdLatched;
+  }
+
+  /** True once temperature has fallen far enough that an operator would be
+   *  permitted to acknowledge/reset the interlock. Purely informational —
+   *  crossing this does not clear the trip by itself. */
+  isEsdResetPermitted(): boolean {
+    return this.state[2] <= ESD_RESET_TEMP;
+  }
+
+  /** Operator action: clears the latched ESD trip, but only if temperature
+   *  has genuinely fallen below the reset threshold. Returns true if the
+   *  trip was actually cleared. */
+  acknowledgeEsd(): boolean {
+    if (this.esdLatched && this.isEsdResetPermitted()) {
+      this.esdLatched = false;
+      return true;
+    }
+    return false;
   }
 
   /** True if the integrator ever produced a non-finite value and had to
@@ -149,27 +173,25 @@ export class CSTREngine {
     this.params.F = defaultParams.F + (this.flowDisturbanceOn ? this.flowMagnitude : 0);
   }
 
-  /** Checks current temperature against the ESD thresholds and updates the
-   *  trip state with hysteresis. Called every RK4 substep (not just once
-   *  per frame) so the interlock engages as soon as possible during a fast
-   *  excursion, rather than only after several substeps have already run
-   *  with the old Tc. */
+  /** Checks current temperature against the trip threshold and latches the
+   *  interlock. Called every RK4 substep (not just once per frame) so it
+   *  engages as soon as possible during a fast excursion. Does NOT auto
+   *  clear — see acknowledgeEsd(). */
   private updateEsd(): void {
     const T = this.state[2];
     if (!Number.isFinite(T)) return;
-    if (!this.esdTripped && T >= ESD_TRIP_TEMP) {
-      this.esdTripped = true;
-    } else if (this.esdTripped && T <= ESD_RESET_TEMP) {
-      this.esdTripped = false;
+    if (!this.esdLatched && T >= ESD_TRIP_TEMP) {
+      this.esdLatched = true;
     }
   }
 
   /** The Tc value actually used by the physics, as opposed to the
    *  commanded value in params.Tc. When tripped, the ESD forces full
    *  cooling regardless of manual or auto control, without overwriting
-   *  the user's setpoint — so control resumes smoothly once it clears. */
+   *  the user's setpoint — so control resumes at that setpoint once the
+   *  operator acknowledges the trip. */
   private effectiveTc(): number {
-    return this.esdTripped ? 250 : this.params.Tc;
+    return this.esdLatched ? 250 : this.params.Tc;
   }
 
   private derivatives(s: Float64Array, out: Float64Array): void {
