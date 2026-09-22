@@ -41,10 +41,30 @@ export const defaultParams: CSTRParams = {
   dHrb: -2.0e4,
 };
 
+// Parameters exposed for the sensitivity "what-if" panel. Kept to a
+// deliberately small, physically meaningful set (activation energy,
+// pre-exponential factor, heat transfer coefficient, heat of reaction) so
+// a user can explore realistic scenarios like catalyst deactivation (k0
+// down), fouling (UA down), or a miscalibrated heat of reaction.
+export const SENSITIVITY_KEYS = ["Ea", "k0", "UA", "dHr"] as const;
+export type SensitivityKey = (typeof SENSITIVITY_KEYS)[number];
+
 // State vector: [Ca, Cb, T]
 const STATE_LEN = 3;
 
 type DisturbanceKind = "Tf" | "F";
+
+export interface EnergyTerms {
+  feed: number; // F/V * (Tf - T): sensible heat carried in/out by flow
+  mainRxn: number; // heat released by the main A -> B reaction
+  sideRxn: number; // heat released by the B -> C side reaction
+  cooling: number; // heat removed by the jacket (negative when removing heat)
+}
+
+export interface ReactionRates {
+  rate1: number; // A -> B, mol/(L*min)
+  rate2: number; // B -> C, mol/(L*min)
+}
 
 // ESD (Emergency Shutdown) interlock thresholds. Independent of the PI
 // controller and the manual Tc slider — this models a Safety Instrumented
@@ -84,6 +104,13 @@ export class CSTREngine {
   private esdLatched = false;
   private faulted = false;
 
+  private diagFeed = 0;
+  private diagMainHeat = 0;
+  private diagSideHeat = 0;
+  private diagCooling = 0;
+  private diagRate1 = 0;
+  private diagRate2 = 0;
+
   constructor(initialCa = 0.5, initialT = 350, params: CSTRParams = defaultParams) {
     this.params = { ...params };
     this.state = new Float64Array(STATE_LEN);
@@ -96,6 +123,7 @@ export class CSTREngine {
     this.state[0] = initialCa;
     this.state[1] = 0; // Cb starts at zero, no product B in the initial fill
     this.state[2] = initialT;
+    this.computeDiagnostics();
   }
 
   setTc(tc: number): void {
@@ -114,6 +142,43 @@ export class CSTREngine {
     return { Ca: this.state[0], Cb: this.state[1], T: this.state[2] };
   }
 
+  /** Live breakdown of the four heat terms driving dT/dt, in K/min. Powers
+   *  the energy balance chart so users can see *why* temperature is moving,
+   *  not just that it is. */
+  getEnergyTerms(): EnergyTerms {
+    return {
+      feed: this.diagFeed,
+      mainRxn: this.diagMainHeat,
+      sideRxn: this.diagSideHeat,
+      cooling: this.diagCooling,
+    };
+  }
+
+  /** Live reaction rates for the A -> B -> C pathway diagram. */
+  getRates(): ReactionRates {
+    return { rate1: this.diagRate1, rate2: this.diagRate2 };
+  }
+
+  /** Sets a kinetic/thermal parameter for the sensitivity "what-if" panel.
+   *  Only the keys in SENSITIVITY_KEYS are intended to be touched this way;
+   *  everything else (F, Tf, Tc, ...) has its own dedicated control path. */
+  setSensitivityParam(key: SensitivityKey, value: number): void {
+    this.params[key] = value;
+  }
+
+  getSensitivityParam(key: SensitivityKey): number {
+    return this.params[key];
+  }
+
+  /** Resets every sensitivity-adjustable parameter back to its nominal
+   *  default, so switching which parameter you're exploring (or hitting
+   *  reset) never leaves a stale override applied on a different one. */
+  resetSensitivityParams(): void {
+    for (const key of SENSITIVITY_KEYS) {
+      this.params[key] = defaultParams[key];
+    }
+  }
+
   resetState(Ca: number, T: number): void {
     this.state[0] = Ca;
     this.state[1] = 0;
@@ -121,6 +186,7 @@ export class CSTREngine {
     this.simTime = 0;
     this.esdLatched = false;
     this.faulted = false;
+    this.computeDiagnostics();
   }
 
   setDisturbance(kind: DisturbanceKind, active: boolean): void {
@@ -218,6 +284,34 @@ export class CSTREngine {
       (p.UA / (p.V * p.rho * p.Cp)) * (T - Tc);
   }
 
+  /** Recomputes the diagnostic breakdown (heat terms + rates) from the
+   *  current, settled state — never from an RK4 intermediate stage — so
+   *  the energy chart and pathway diagram always show physically
+   *  consistent snapshots. */
+  private computeDiagnostics(): void {
+    const p = this.params;
+    const s = this.state;
+    const Ca = s[0];
+    const Cb = s[1];
+    const T = s[2];
+    const Tc = this.effectiveTc();
+
+    if (!Number.isFinite(T)) return;
+
+    const kRate1 = p.k0 * Math.exp(-p.Ea / (p.R * T));
+    const rate1 = kRate1 * Ca;
+    const kRate2 = p.k0b * Math.exp(-p.Eab / (p.R * T));
+    const rate2 = kRate2 * Cb;
+    const FoverV = p.F / p.V;
+
+    this.diagRate1 = rate1;
+    this.diagRate2 = rate2;
+    this.diagFeed = FoverV * (p.Tf - T);
+    this.diagMainHeat = (-p.dHr / (p.rho * p.Cp)) * rate1;
+    this.diagSideHeat = (-p.dHrb / (p.rho * p.Cp)) * rate2;
+    this.diagCooling = -(p.UA / (p.V * p.rho * p.Cp)) * (T - Tc);
+  }
+
   step(dt: number): void {
     this.applyDisturbances();
 
@@ -278,6 +372,7 @@ export class CSTREngine {
     }
 
     this.updateEsd();
+    this.computeDiagnostics();
     this.simTime += dt;
   }
 

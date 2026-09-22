@@ -1,15 +1,32 @@
 import { useEffect, useRef, useState } from "react";
 import { Canvas } from "@react-three/fiber";
 import { OrbitControls, Environment, ContactShadows, Grid } from "@react-three/drei";
-import { CSTREngine, defaultParams, PIController } from "./simulation";
+import {
+  CSTREngine,
+  defaultParams,
+  PIController,
+  SENSITIVITY_KEYS,
+  type SensitivityKey,
+  type EnergyTerms,
+  type ReactionRates,
+} from "./simulation";
 import { ReactorMesh } from "./ReactorMesh";
 import { TelemetryChart } from "./TelemetryChart";
 import { PhasePortraitChart } from "./PhasePortraitChart";
+import { ReactionPathway } from "./ReactionPathway";
+import { EnergyBalanceChart } from "./EnergyBalanceChart";
 
 const COLD_T = 300;
 const HOT_T = 450;
 
 type PresetKey = "cold" | "runaway" | "rejection";
+
+const SENSITIVITY_LABELS: Record<SensitivityKey, string> = {
+  Ea: "Activation Energy (Ea)",
+  k0: "Pre-exponential Factor (k0)",
+  UA: "Heat Transfer Coeff. (UA)",
+  dHr: "Heat of Reaction (dHr)",
+};
 
 export default function App() {
   const engineRef = useRef<CSTREngine>(new CSTREngine(0.5, 350, defaultParams));
@@ -29,9 +46,14 @@ export default function App() {
   const [esdActive, setEsdActive] = useState(false);
   const [esdResetPermitted, setEsdResetPermitted] = useState(false);
   const [faulted, setFaulted] = useState(false);
+  const [sensitivityKey, setSensitivityKey] = useState<SensitivityKey | null>(null);
+  const [sensitivityPct, setSensitivityPct] = useState(0);
 
   const liveTempRef = useRef(350);
   const liveCaRef = useRef(0.5);
+  const liveCbRef = useRef(0);
+  const energyTermsRef = useRef<EnergyTerms>({ feed: 0, mainRxn: 0, sideRxn: 0, cooling: 0 });
+  const ratesRef = useRef<ReactionRates>({ rate1: 0, rate2: 0 });
   const autoModeRef = useRef(autoMode);
   const setpointRef = useRef(setpoint);
 
@@ -70,6 +92,9 @@ export default function App() {
       const { Ca, Cb, T } = engine.getState();
       liveTempRef.current = T;
       liveCaRef.current = Ca;
+      liveCbRef.current = Cb;
+      energyTermsRef.current = engine.getEnergyTerms();
+      ratesRef.current = engine.getRates();
       setTelemetry({ Ca, Cb, T, simTime: engine.getTime() });
       setEsdActive(engine.isEsdTripped());
       setEsdResetPermitted(engine.isEsdResetPermitted());
@@ -139,6 +164,32 @@ export default function App() {
       setTc(300);
       setEsdActive(false);
     }
+  };
+
+  const applySensitivity = (key: SensitivityKey | null, pct: number) => {
+    engineRef.current.resetSensitivityParams();
+    if (key) {
+      const base = defaultParams[key];
+      engineRef.current.setSensitivityParam(key, base * (1 + pct / 100));
+    }
+  };
+
+  const handleSensitivityKeyChange = (value: string) => {
+    const key = (value === "none" ? null : (value as SensitivityKey));
+    setSensitivityKey(key);
+    setSensitivityPct(0);
+    applySensitivity(key, 0);
+  };
+
+  const handleSensitivityPctChange = (pct: number) => {
+    setSensitivityPct(pct);
+    applySensitivity(sensitivityKey, pct);
+  };
+
+  const handleSensitivityReset = () => {
+    setSensitivityKey(null);
+    setSensitivityPct(0);
+    engineRef.current.resetSensitivityParams();
   };
 
   const handlePresetToggle = (key: PresetKey) => {
@@ -254,6 +305,12 @@ export default function App() {
             <div style={{ display: "flex", alignItems: "center", fontSize: 11.5, color: "#a78bfa" }}>
               <span className="status-dot" style={{ background: "#a78bfa" }} />
               AUTO CONTROL
+            </div>
+          )}
+          {sensitivityKey && (
+            <div style={{ display: "flex", alignItems: "center", fontSize: 11.5, color: "#3ba8ff" }}>
+              <span className="status-dot" style={{ background: "#3ba8ff" }} />
+              WHAT-IF: {sensitivityKey} {sensitivityPct >= 0 ? "+" : ""}{sensitivityPct}%
             </div>
           )}
           {anyDisturbanceActive && (
@@ -410,6 +467,22 @@ export default function App() {
           </Card>
 
           <Card>
+            <SectionLabel>Reaction Pathway</SectionLabel>
+            <ReactionPathway
+              getCa={() => liveCaRef.current}
+              getCb={() => liveCbRef.current}
+              getCaf={() => defaultParams.Caf}
+              getRate1={() => ratesRef.current.rate1}
+              getRate2={() => ratesRef.current.rate2}
+            />
+          </Card>
+
+          <Card>
+            <SectionLabel>Energy Balance</SectionLabel>
+            <EnergyBalanceChart getTerms={() => energyTermsRef.current} windowSeconds={30} />
+          </Card>
+
+          <Card>
             <SectionLabel>Transient Response</SectionLabel>
             <TelemetryChart
               getCa={() => liveCaRef.current}
@@ -431,6 +504,79 @@ export default function App() {
               tMin={260}
               tMax={460}
             />
+          </Card>
+
+          <Card>
+            <SectionLabel>Sensitivity Analysis</SectionLabel>
+            <select
+              value={sensitivityKey ?? "none"}
+              onChange={(e) => handleSensitivityKeyChange(e.target.value)}
+              style={{
+                width: "100%",
+                padding: "7px 8px",
+                borderRadius: 6,
+                background: "#0a0d13",
+                border: "1px solid #1f2733",
+                color: "#eef1f6",
+                fontSize: 12.5,
+                marginBottom: 10,
+              }}
+            >
+              <option value="none">None (nominal parameters)</option>
+              {SENSITIVITY_KEYS.map((key) => (
+                <option key={key} value={key}>
+                  {SENSITIVITY_LABELS[key]}
+                </option>
+              ))}
+            </select>
+
+            {sensitivityKey && (
+              <>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 8 }}>
+                  <span style={{ fontSize: 12.5, color: "#8a94a6" }}>Offset from nominal</span>
+                  <span className="mono" style={{ fontSize: 16, fontWeight: 700, color: "#3ba8ff" }}>
+                    {sensitivityPct >= 0 ? "+" : ""}{sensitivityPct}%
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  className="thermo-slider"
+                  min={-50}
+                  max={50}
+                  step={1}
+                  value={sensitivityPct}
+                  onChange={(e) => handleSensitivityPctChange(parseFloat(e.target.value))}
+                />
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "#5b6577", marginTop: 6 }}>
+                  <span>-50%</span>
+                  <span>nominal</span>
+                  <span>+50%</span>
+                </div>
+                <div className="mono" style={{ fontSize: 10.5, color: "#5b6577", marginTop: 8 }}>
+                  {SENSITIVITY_LABELS[sensitivityKey]}: {defaultParams[sensitivityKey].toExponential(3)} → {(defaultParams[sensitivityKey] * (1 + sensitivityPct / 100)).toExponential(3)}
+                </div>
+                <button
+                  onClick={handleSensitivityReset}
+                  style={{
+                    marginTop: 10,
+                    padding: "5px 12px",
+                    borderRadius: 6,
+                    border: "1px solid #1f2733",
+                    background: "transparent",
+                    color: "#8a94a6",
+                    fontSize: 11.5,
+                    cursor: "pointer",
+                  }}
+                >
+                  Reset to Nominal
+                </button>
+              </>
+            )}
+            {!sensitivityKey && (
+              <div style={{ fontSize: 11, color: "#5b6577" }}>
+                Pick a parameter to explore how the reactor responds to model uncertainty, e.g. fouling (UA↓) or catalyst deactivation (k0↓).
+              </div>
+            )}
           </Card>
 
           <Card>
