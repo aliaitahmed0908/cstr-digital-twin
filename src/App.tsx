@@ -25,6 +25,7 @@ export default function App() {
   const [autoMode, setAutoMode] = useState(false);
   const [setpoint, setSetpoint] = useState(330);
   const [activePreset, setActivePreset] = useState<PresetKey | null>(null);
+  const [cutawayOn, setCutawayOn] = useState(false);
 
   const liveTempRef = useRef(350);
   const liveCaRef = useRef(0.5);
@@ -355,14 +356,36 @@ export default function App() {
               <span>250 K · cold</span>
               <span>450 K · hot</span>
             </div>
+
+            <div style={{ height: 1, background: "#1f2733", margin: "14px 0" }} />
+
+            <ToggleRow
+              label="Cutaway View"
+              detail={cutawayOn ? "Vessel sliced open" : "Solid vessel"}
+              checked={cutawayOn}
+              onChange={() => setCutawayOn((v) => !v)}
+              accentColor="#3ba8ff"
+            />
           </Card>
         </div>
 
         <div style={{ flex: 1, position: "relative" }}>
-          <Canvas camera={{ position: [4.5, 2.8, 4.5], fov: 42 }} shadows>
+          <Canvas
+            camera={{ position: [4.5, 2.8, 4.5], fov: 42 }}
+            shadows
+            onCreated={({ gl }) => {
+              gl.localClippingEnabled = true;
+            }}
+          >
             <color attach="background" args={["#05070a"]} />
             <fog attach="fog" args={["#05070a", 8, 18]} />
-            <ReactorMesh getTemperature={() => liveTempRef.current} coldTemp={COLD_T} hotTemp={HOT_T} />
+            <ReactorMesh
+              getTemperature={() => liveTempRef.current}
+              getCoolingTemp={() => tc}
+              coldTemp={COLD_T}
+              hotTemp={HOT_T}
+              cutawayEnabled={cutawayOn}
+            />
             <ContactShadows position={[0, -1.6, 0]} opacity={0.4} scale={10} blur={2.5} far={4} />
             <Grid
               position={[0, -1.6, 0]}

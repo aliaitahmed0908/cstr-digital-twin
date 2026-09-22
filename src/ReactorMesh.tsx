@@ -4,18 +4,27 @@ import * as THREE from "three";
 
 interface ReactorMeshProps {
   getTemperature: () => number;
+  getCoolingTemp?: () => number; // Tc, cooling jacket temperature
   coldTemp?: number;
   hotTemp?: number;
+  jacketColdTemp?: number;
+  jacketHotTemp?: number;
+  cutawayEnabled?: boolean; // NEW: toggle to slice the vessel open
 }
 
 const PARTICLE_COUNT = 220;
 
 export function ReactorMesh({
   getTemperature,
+  getCoolingTemp,
   coldTemp = 300,
   hotTemp = 450,
+  jacketColdTemp = 250,
+  jacketHotTemp = 350,
+  cutawayEnabled = false,
 }: ReactorMeshProps) {
   const materialRef = useRef<THREE.MeshStandardMaterial>(null);
+  const jacketMaterialRef = useRef<THREE.MeshPhysicalMaterial>(null);
   const glowRef = useRef<THREE.PointLight>(null);
   const agitatorRef = useRef<THREE.Group>(null);
   const particlesRef = useRef<THREE.Points>(null);
@@ -24,6 +33,16 @@ export function ReactorMesh({
   const coldColor = useMemo(() => new THREE.Color(0x1e6fff), []);
   const hotColor = useMemo(() => new THREE.Color(0xff2a1e), []);
   const lerped = useMemo(() => new THREE.Color(), []);
+  const jacketLerped = useMemo(() => new THREE.Color(), []);
+
+  // Single clipping plane used for the cutaway view. Normal points toward
+  // +Z, so the FRONT half of the vessel (closer to the default camera) gets
+  // sliced away, revealing the fluid and internals.
+  const cutawayPlane = useMemo(() => new THREE.Plane(new THREE.Vector3(0, 0, 1), 0), []);
+  const clippingPlanes = useMemo(
+    () => (cutawayEnabled ? [cutawayPlane] : []),
+    [cutawayEnabled, cutawayPlane]
+  );
 
   const particleRadius = useMemo(() => new Float32Array(PARTICLE_COUNT), []);
   const particleAngle = useMemo(() => new Float32Array(PARTICLE_COUNT), []);
@@ -66,6 +85,20 @@ export function ReactorMesh({
       agitatorRef.current.rotation.y += delta * speed;
     }
 
+    // Cooling jacket color: driven by Tc, independent of reactor temperature T.
+    // Falls back to a static cold tint if getCoolingTemp isn't wired up yet.
+    if (jacketMaterialRef.current) {
+      const Tc = getCoolingTemp ? getCoolingTemp() : jacketColdTemp;
+      const jt = THREE.MathUtils.clamp(
+        (Tc - jacketColdTemp) / (jacketHotTemp - jacketColdTemp),
+        0,
+        1
+      );
+      jacketLerped.copy(coldColor).lerp(hotColor, jt);
+      jacketMaterialRef.current.color.lerp(jacketLerped, 0.1);
+      jacketMaterialRef.current.emissive.lerp(jacketLerped, 0.05);
+    }
+
     const baseParticleSpeed = 0.5 + t * 3.5;
     for (let i = 0; i < PARTICLE_COUNT; i++) {
       particleAngle[i] += delta * baseParticleSpeed * particleSpeedMul[i];
@@ -91,6 +124,7 @@ export function ReactorMesh({
       <directionalLight position={[3, 5, 3]} intensity={0.8} />
       <pointLight ref={glowRef} position={[0, 0, 0]} distance={4} intensity={1} />
 
+      {/* Main vessel shell. clippingPlanes slices this open when cutaway is on. */}
       <mesh position={[0, 0, 0]} castShadow>
         <cylinderGeometry args={[1.2, 1.2, 2.4, 48, 1, false]} />
         <meshStandardMaterial
@@ -99,6 +133,8 @@ export function ReactorMesh({
           metalness={0.15}
           transparent
           opacity={0.75}
+          clippingPlanes={clippingPlanes}
+          side={THREE.DoubleSide}
         />
       </mesh>
 
@@ -138,14 +174,37 @@ export function ReactorMesh({
         </mesh>
       </group>
 
+      {/*
+        COOLING JACKET — previously a static blue wireframe with no real
+        purpose. Now a solid, semi-transparent shell whose color is driven
+        by Tc (the cooling jacket temperature), separately from the
+        reactor's own temperature above. It also respects the cutaway
+        clipping plane so the jacket opens up along with the main vessel.
+      */}
       <mesh position={[0, 0, 0]}>
         <cylinderGeometry args={[1.35, 1.35, 2.5, 48, 1, true]} />
-        <meshStandardMaterial
-          color={0x2244aa}
-          wireframe
+        <meshPhysicalMaterial
+          ref={jacketMaterialRef}
+          color={0x1e6fff}
           transparent
-          opacity={0.25}
+          opacity={0.3}
+          roughness={0.2}
+          metalness={0.1}
+          transmission={0.3}
+          clippingPlanes={clippingPlanes}
+          side={THREE.DoubleSide}
         />
+      </mesh>
+
+      {/* Cosmetic jacket inlet/outlet nozzles — makes the jacket read as
+          real plumbing rather than a floating shell. */}
+      <mesh position={[1.35, 0.7, 0]} rotation={[0, 0, Math.PI / 2]}>
+        <cylinderGeometry args={[0.07, 0.07, 0.35, 12]} />
+        <meshStandardMaterial color={0x71717a} metalness={0.8} roughness={0.3} />
+      </mesh>
+      <mesh position={[-1.35, -0.7, 0]} rotation={[0, 0, Math.PI / 2]}>
+        <cylinderGeometry args={[0.07, 0.07, 0.35, 12]} />
+        <meshStandardMaterial color={0x71717a} metalness={0.8} roughness={0.3} />
       </mesh>
     </group>
   );
