@@ -4,15 +4,22 @@ import * as THREE from "three";
 
 interface ReactorMeshProps {
   getTemperature: () => number;
-  getCoolingTemp?: () => number; // Tc, cooling jacket temperature
+  getCoolingTemp?: () => number;
   coldTemp?: number;
   hotTemp?: number;
   jacketColdTemp?: number;
   jacketHotTemp?: number;
-  cutawayEnabled?: boolean; // NEW: toggle to slice the vessel open
+  cutawayEnabled?: boolean;
 }
 
 const PARTICLE_COUNT = 220;
+
+// Vessel proportions, tuned to loosely match a Pfaudler-style glass-lined
+// reactor: dished bottom, cylindrical body, domed top head, external
+// support legs, top-mounted motor drive.
+const VESSEL_RADIUS = 1.2;
+const VESSEL_HEIGHT = 2.4;
+const LEG_HEIGHT = 0.9;
 
 export function ReactorMesh({
   getTemperature,
@@ -23,7 +30,7 @@ export function ReactorMesh({
   jacketHotTemp = 350,
   cutawayEnabled = false,
 }: ReactorMeshProps) {
-  const materialRef = useRef<THREE.MeshStandardMaterial>(null);
+  const materialRef = useRef<THREE.MeshPhysicalMaterial>(null);
   const jacketMaterialRef = useRef<THREE.MeshPhysicalMaterial>(null);
   const glowRef = useRef<THREE.PointLight>(null);
   const agitatorRef = useRef<THREE.Group>(null);
@@ -35,9 +42,6 @@ export function ReactorMesh({
   const lerped = useMemo(() => new THREE.Color(), []);
   const jacketLerped = useMemo(() => new THREE.Color(), []);
 
-  // Single clipping plane used for the cutaway view. Normal points toward
-  // +Z, so the FRONT half of the vessel (closer to the default camera) gets
-  // sliced away, revealing the fluid and internals.
   const cutawayPlane = useMemo(() => new THREE.Plane(new THREE.Vector3(0, 0, 1), 0), []);
   const clippingPlanes = useMemo(
     () => (cutawayEnabled ? [cutawayPlane] : []),
@@ -52,9 +56,9 @@ export function ReactorMesh({
 
   useMemo(() => {
     for (let i = 0; i < PARTICLE_COUNT; i++) {
-      particleRadius[i] = Math.sqrt(Math.random()) * 1.05;
+      particleRadius[i] = Math.sqrt(Math.random()) * (VESSEL_RADIUS * 0.85);
       particleAngle[i] = Math.random() * Math.PI * 2;
-      particleHeight[i] = (Math.random() - 0.5) * 2.1;
+      particleHeight[i] = (Math.random() - 0.5) * (VESSEL_HEIGHT * 0.85);
       particleSpeedMul[i] = 0.6 + Math.random() * 0.8;
     }
   }, [particleRadius, particleAngle, particleHeight, particleSpeedMul]);
@@ -85,8 +89,6 @@ export function ReactorMesh({
       agitatorRef.current.rotation.y += delta * speed;
     }
 
-    // Cooling jacket color: driven by Tc, independent of reactor temperature T.
-    // Falls back to a static cold tint if getCoolingTemp isn't wired up yet.
     if (jacketMaterialRef.current) {
       const Tc = getCoolingTemp ? getCoolingTemp() : jacketColdTemp;
       const jt = THREE.MathUtils.clamp(
@@ -118,26 +120,112 @@ export function ReactorMesh({
     }
   });
 
+  // Positions for 4 support legs, splayed outward like the reference diagram.
+  const legPositions = useMemo(() => {
+    const legs: [number, number, number][] = [];
+    const legRadius = VESSEL_RADIUS * 0.75;
+    for (let i = 0; i < 4; i++) {
+      const angle = (i / 4) * Math.PI * 2 + Math.PI / 4;
+      legs.push([legRadius * Math.cos(angle), -VESSEL_HEIGHT / 2 - LEG_HEIGHT / 2, legRadius * Math.sin(angle)]);
+    }
+    return legs;
+  }, []);
+
+  // Positions for small top-head nozzles, scattered like the reference image.
+  const nozzlePositions = useMemo(() => {
+    const nozzles: [number, number][] = [];
+    const count = 6;
+    for (let i = 0; i < count; i++) {
+      const angle = (i / count) * Math.PI * 2;
+      nozzles.push([Math.cos(angle) * VESSEL_RADIUS * 0.55, Math.sin(angle) * VESSEL_RADIUS * 0.55]);
+    }
+    return nozzles;
+  }, []);
+
   return (
-    <group>
+    <group position={[0, LEG_HEIGHT / 2, 0]}>
       <ambientLight intensity={0.4} />
-      <directionalLight position={[3, 5, 3]} intensity={0.8} />
+      <directionalLight position={[3, 5, 3]} intensity={0.8} castShadow />
       <pointLight ref={glowRef} position={[0, 0, 0]} distance={4} intensity={1} />
 
-      {/* Main vessel shell. clippingPlanes slices this open when cutaway is on. */}
+      {/* Support legs — angled, planted on the ground, matching the
+          reference diagram's "legs designed for wind/seismic conditions". */}
+      {legPositions.map((pos, i) => (
+        <mesh key={i} position={pos}>
+          <cylinderGeometry args={[0.05, 0.07, LEG_HEIGHT, 8]} />
+          <meshStandardMaterial color={0x4a4f57} metalness={0.7} roughness={0.4} />
+        </mesh>
+      ))}
+
+      {/* Main cylindrical vessel body — glossy, glass-lined look via
+          clearcoat rather than a flat tinted color. */}
       <mesh position={[0, 0, 0]} castShadow>
-        <cylinderGeometry args={[1.2, 1.2, 2.4, 48, 1, false]} />
-        <meshStandardMaterial
+        <cylinderGeometry args={[VESSEL_RADIUS, VESSEL_RADIUS, VESSEL_HEIGHT, 48, 1, false]} />
+        <meshPhysicalMaterial
           ref={materialRef}
-          roughness={0.35}
-          metalness={0.15}
+          roughness={0.12}
+          metalness={0.05}
+          clearcoat={1}
+          clearcoatRoughness={0.08}
           transparent
-          opacity={0.75}
+          opacity={0.72}
           clippingPlanes={clippingPlanes}
           side={THREE.DoubleSide}
         />
       </mesh>
 
+      {/* Dished bottom head, per reference: a rounded dish rather than a
+          plain hemisphere, achieved with a squashed sphere. */}
+      <mesh position={[0, -VESSEL_HEIGHT / 2, 0]} rotation={[Math.PI, 0, 0]} scale={[1, 0.55, 1]}>
+        <sphereGeometry args={[VESSEL_RADIUS, 32, 16, 0, Math.PI * 2, 0, Math.PI / 2]} />
+        <meshPhysicalMaterial color={0x9aa0a8} roughness={0.35} metalness={0.5} clearcoat={0.6} />
+      </mesh>
+
+      {/* Domed top head. */}
+      <mesh position={[0, VESSEL_HEIGHT / 2, 0]} scale={[1, 0.65, 1]}>
+        <sphereGeometry args={[VESSEL_RADIUS, 32, 16, 0, Math.PI * 2, 0, Math.PI / 2]} />
+        <meshPhysicalMaterial color={0x9aa0a8} roughness={0.35} metalness={0.5} clearcoat={0.6} />
+      </mesh>
+
+      {/* Manway with sight glass — the larger offset port on the top head
+          in the reference image. */}
+      <group position={[VESSEL_RADIUS * 0.45, VESSEL_HEIGHT / 2 + 0.15, 0]}>
+        <mesh>
+          <cylinderGeometry args={[0.22, 0.22, 0.18, 24]} />
+          <meshStandardMaterial color={0x8a8f97} metalness={0.6} roughness={0.35} />
+        </mesh>
+        <mesh position={[0, 0.1, 0]}>
+          <cylinderGeometry args={[0.17, 0.17, 0.03, 24]} />
+          <meshPhysicalMaterial color={0xbfe0ff} transmission={0.9} roughness={0.05} thickness={0.2} />
+        </mesh>
+      </group>
+
+      {/* Smaller top head nozzles, scattered around the manway. */}
+      {nozzlePositions.map(([x, z], i) => (
+        <mesh key={i} position={[x, VESSEL_HEIGHT / 2 + 0.1, z]}>
+          <cylinderGeometry args={[0.06, 0.06, 0.22, 12]} />
+          <meshStandardMaterial color={0x71717a} metalness={0.7} roughness={0.35} />
+        </mesh>
+      ))}
+
+      {/* Top-mounted motor drive assembly, standing on a short mounting
+          plate, per the "Proven, rugged mixer drive" callout. */}
+      <group position={[0, VESSEL_HEIGHT / 2 + 0.55, 0]}>
+        <mesh position={[0, -0.15, 0]}>
+          <cylinderGeometry args={[0.35, 0.35, 0.08, 24]} />
+          <meshStandardMaterial color={0x4a4f57} metalness={0.6} roughness={0.4} />
+        </mesh>
+        <mesh position={[0, 0.1, 0]}>
+          <boxGeometry args={[0.5, 0.5, 0.5]} />
+          <meshStandardMaterial color={0x5b6270} metalness={0.5} roughness={0.45} />
+        </mesh>
+        <mesh position={[0, 0.42, 0]}>
+          <cylinderGeometry args={[0.16, 0.16, 0.12, 16]} />
+          <meshStandardMaterial color={0x2b2f36} metalness={0.7} roughness={0.3} />
+        </mesh>
+      </group>
+
+      {/* Fluid + suspended particle field. */}
       <points ref={particlesRef} geometry={particleGeometry}>
         <pointsMaterial
           ref={particleMaterialRef}
@@ -150,62 +238,73 @@ export function ReactorMesh({
         />
       </points>
 
-      <mesh position={[0, 1.2, 0]}>
-        <sphereGeometry args={[1.2, 32, 16, 0, Math.PI * 2, 0, Math.PI / 2]} />
-        <meshStandardMaterial color={0x9aa0a8} roughness={0.65} metalness={0.15} />
-      </mesh>
-      <mesh position={[0, -1.2, 0]} rotation={[Math.PI, 0, 0]}>
-        <sphereGeometry args={[1.2, 32, 16, 0, Math.PI * 2, 0, Math.PI / 2]} />
-        <meshStandardMaterial color={0x9aa0a8} roughness={0.65} metalness={0.15} />
-      </mesh>
-
-      <group ref={agitatorRef} position={[0, 0.6, 0]}>
+      {/* Agitator shaft running from the drive through the top head into
+          the vessel, with an anchor-style impeller near the bottom rather
+          than plain crossed blades, closer to the "Cryo-Lock impeller"
+          shape in the reference diagram. */}
+      <group ref={agitatorRef} position={[0, VESSEL_HEIGHT / 2, 0]}>
         <mesh>
-          <cylinderGeometry args={[0.05, 0.05, 2.6, 12]} />
-          <meshStandardMaterial color={0x333333} metalness={0.6} roughness={0.3} />
+          <cylinderGeometry args={[0.045, 0.045, VESSEL_HEIGHT + 0.9, 12]} />
+          <meshStandardMaterial color={0x333333} metalness={0.7} roughness={0.25} />
         </mesh>
-        <mesh position={[0, -1.0, 0]} rotation={[0, 0, Math.PI / 2]}>
-          <boxGeometry args={[1.4, 0.08, 0.15]} />
-          <meshStandardMaterial color={0x444444} metalness={0.6} roughness={0.3} />
-        </mesh>
-        <mesh position={[0, -0.6, 0]} rotation={[0, Math.PI / 2, Math.PI / 2]}>
-          <boxGeometry args={[1.2, 0.08, 0.15]} />
-          <meshStandardMaterial color={0x444444} metalness={0.6} roughness={0.3} />
-        </mesh>
+
+        {/* Anchor-style impeller near the bottom: two curved arms formed
+            from bent box segments, wider than the old straight blades so
+            they actually read against the fluid color. */}
+        <group position={[0, -VESSEL_HEIGHT * 0.85, 0]}>
+          <mesh rotation={[0, 0, 0]}>
+            <boxGeometry args={[VESSEL_RADIUS * 1.5, 0.1, 0.18]} />
+            <meshStandardMaterial color={0xd0d3d8} metalness={0.75} roughness={0.25} />
+          </mesh>
+          <mesh rotation={[0, Math.PI / 2, 0]}>
+            <boxGeometry args={[VESSEL_RADIUS * 1.5, 0.1, 0.18]} />
+            <meshStandardMaterial color={0xd0d3d8} metalness={0.75} roughness={0.25} />
+          </mesh>
+          {/* Curved lower scoop hinting at an anchor impeller's bottom sweep */}
+          <mesh position={[0, -0.15, 0]} rotation={[Math.PI / 2, 0, 0]}>
+            <torusGeometry args={[VESSEL_RADIUS * 0.7, 0.06, 8, 24, Math.PI]} />
+            <meshStandardMaterial color={0xd0d3d8} metalness={0.75} roughness={0.25} />
+          </mesh>
+        </group>
       </group>
 
-      {/*
-        COOLING JACKET — previously a static blue wireframe with no real
-        purpose. Now a solid, semi-transparent shell whose color is driven
-        by Tc (the cooling jacket temperature), separately from the
-        reactor's own temperature above. It also respects the cutaway
-        clipping plane so the jacket opens up along with the main vessel.
-      */}
-      <mesh position={[0, 0, 0]}>
-        <cylinderGeometry args={[1.35, 1.35, 2.5, 48, 1, true]} />
-        <meshPhysicalMaterial
-          ref={jacketMaterialRef}
-          color={0x1e6fff}
-          transparent
-          opacity={0.3}
-          roughness={0.2}
-          metalness={0.1}
-          transmission={0.3}
-          clippingPlanes={clippingPlanes}
-          side={THREE.DoubleSide}
-        />
+      {/* Single wall-mounted baffle — per the reference's "superior fin
+          baffle", a long flat plate running most of the vessel height,
+          standing off the inner wall, rather than crossed agitator blades. */}
+      <mesh position={[0, 0, VESSEL_RADIUS * 0.92]}>
+        <boxGeometry args={[0.12, VESSEL_HEIGHT * 0.85, 0.05]} />
+        <meshStandardMaterial color={0xb7bcc4} metalness={0.6} roughness={0.3} />
       </mesh>
 
-      {/* Cosmetic jacket inlet/outlet nozzles — makes the jacket read as
-          real plumbing rather than a floating shell. */}
-      <mesh position={[1.35, 0.7, 0]} rotation={[0, 0, Math.PI / 2]}>
-        <cylinderGeometry args={[0.07, 0.07, 0.35, 12]} />
-        <meshStandardMaterial color={0x71717a} metalness={0.8} roughness={0.3} />
-      </mesh>
-      <mesh position={[-1.35, -0.7, 0]} rotation={[0, 0, Math.PI / 2]}>
-        <cylinderGeometry args={[0.07, 0.07, 0.35, 12]} />
-        <meshStandardMaterial color={0x71717a} metalness={0.8} roughness={0.3} />
-      </mesh>
+      {/* Cooling jacket — wraps the lower ~2/3 of the vessel, tinted by Tc,
+          independent of the reactor's own temperature. */}
+      <group position={[0, -VESSEL_HEIGHT * 0.08, 0]}>
+        <mesh>
+          <cylinderGeometry args={[VESSEL_RADIUS * 1.18, VESSEL_RADIUS * 1.18, VESSEL_HEIGHT * 0.7, 48, 1, true]} />
+          <meshPhysicalMaterial
+            ref={jacketMaterialRef}
+            color={0x1e6fff}
+            transparent
+            opacity={0.3}
+            roughness={0.2}
+            metalness={0.1}
+            transmission={0.3}
+            clippingPlanes={clippingPlanes}
+            side={THREE.DoubleSide}
+          />
+        </mesh>
+
+        {/* Jacket inlet/outlet, nudged to actually intersect the jacket
+            wall rather than float outside it. */}
+        <mesh position={[VESSEL_RADIUS * 1.05, VESSEL_HEIGHT * 0.2, 0]} rotation={[0, 0, Math.PI / 2]}>
+          <cylinderGeometry args={[0.07, 0.07, 0.3, 12]} />
+          <meshStandardMaterial color={0x71717a} metalness={0.8} roughness={0.3} />
+        </mesh>
+        <mesh position={[-VESSEL_RADIUS * 1.05, -VESSEL_HEIGHT * 0.2, 0]} rotation={[0, 0, Math.PI / 2]}>
+          <cylinderGeometry args={[0.07, 0.07, 0.3, 12]} />
+          <meshStandardMaterial color={0x71717a} metalness={0.8} roughness={0.3} />
+        </mesh>
+      </group>
     </group>
   );
 }
