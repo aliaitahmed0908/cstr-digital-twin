@@ -1,3 +1,4 @@
+
 import { useRef, useMemo } from "react";
 import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
@@ -14,15 +15,12 @@ interface ReactorMeshProps {
 
 const PARTICLE_COUNT = 220;
 
-// Aspect ratio kept between 1:1 and 1.5:1 (height:diameter) per spec.
 const VESSEL_RADIUS = 1.1;
-const VESSEL_HEIGHT = 2.6; // ~1.18:1 with diameter 2.2
-const LUG_HEIGHT_FRACTION = 0.32; // where the side support lugs attach
-const LEG_SPLAY_HEIGHT = 0.45; // was 1.0 — pulled in so legs read as short supports, not spears
+const VESSEL_HEIGHT = 2.6;
+const LUG_HEIGHT_FRACTION = 0.32;
+const LEG_SPLAY_HEIGHT = 0.45;
 
-// Exterior industrial color: dark royal blue, classic Pfaudler cladding.
 const EXTERIOR_COLOR = 0x1a3d6b;
-// Interior glass-lined color: deep cobalt/turquoise, high gloss.
 const GLASS_BASE_COLOR = 0x0a3d5c;
 
 export function ReactorMesh({
@@ -153,9 +151,6 @@ export function ReactorMesh({
       <directionalLight position={[3, 5, 3]} intensity={0.85} castShadow />
       <pointLight ref={glowRef} position={[0, 0, 0]} distance={4.5} intensity={1} />
 
-      {/* Side-mounted support lugs: bracket plate + angled pipe-leg down to
-          the ground. LEG_SPLAY_HEIGHT now pulled in so these read as short,
-          sturdy supports rather than long diagonal spears. */}
       {lugAnchors.map(({ bracket, angle }, i) => {
         const groundX = Math.cos(angle) * (VESSEL_RADIUS + LEG_SPLAY_HEIGHT * 0.5);
         const groundZ = Math.sin(angle) * (VESSEL_RADIUS + LEG_SPLAY_HEIGHT * 0.5);
@@ -289,6 +284,11 @@ export function ReactorMesh({
         />
       </points>
 
+      {/* Agitator: shaft + a proper hub-and-blade turbine near the
+          bottom. Each blade radiates outward from a central hub (rather
+          than straddling the shaft) and carries a consistent pitch angle,
+          so the three blades read as one coordinated impeller instead of
+          scattered debris. */}
       <group ref={agitatorRef} position={[0, VESSEL_HEIGHT / 2, 0]}>
         <mesh>
           <cylinderGeometry args={[0.05, 0.05, VESSEL_HEIGHT * 1.05, 12]} />
@@ -296,18 +296,30 @@ export function ReactorMesh({
         </mesh>
 
         <group position={[0, -VESSEL_HEIGHT * 0.78, 0]}>
+          {/* central hub the blades physically connect to */}
+          <mesh>
+            <cylinderGeometry args={[0.1, 0.1, 0.14, 16]} />
+            <meshStandardMaterial color={0xb0b4ba} metalness={0.8} roughness={0.2} />
+          </mesh>
+
           {[0, 1, 2].map((i) => (
             <group key={i} rotation={[0, (i / 3) * Math.PI * 2, 0]}>
-              <mesh position={[VESSEL_RADIUS * 0.4, 0, 0]} rotation={[0.35, 0, 0.25]}>
-                <boxGeometry args={[VESSEL_RADIUS * 0.75, 0.08, 0.22]} />
-                <meshStandardMaterial color={0xd8dbe0} metalness={0.8} roughness={0.2} />
+              {/* short connector arm from hub to blade root */}
+              <mesh position={[VESSEL_RADIUS * 0.13, 0, 0]}>
+                <boxGeometry args={[VESSEL_RADIUS * 0.16, 0.06, 0.08]} />
+                <meshStandardMaterial color={0xb0b4ba} metalness={0.8} roughness={0.2} />
               </mesh>
+              {/* blade itself: radiates outward from the hub, with a
+                  consistent pitch (tilt) applied at the blade's own
+                  local origin so it twists like a real turbine blade */}
+              <group position={[VESSEL_RADIUS * 0.46, 0, 0]} rotation={[0, 0, THREE.MathUtils.degToRad(28)]}>
+                <mesh>
+                  <boxGeometry args={[VESSEL_RADIUS * 0.58, 0.045, 0.26]} />
+                  <meshStandardMaterial color={0xd8dbe0} metalness={0.8} roughness={0.18} />
+                </mesh>
+              </group>
             </group>
           ))}
-          <mesh>
-            <sphereGeometry args={[0.09, 12, 12]} />
-            <meshStandardMaterial color={0xd8dbe0} metalness={0.8} roughness={0.2} />
-          </mesh>
         </group>
       </group>
 
