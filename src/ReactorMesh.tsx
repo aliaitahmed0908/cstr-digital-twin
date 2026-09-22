@@ -18,7 +18,7 @@ const PARTICLE_COUNT = 220;
 const VESSEL_RADIUS = 1.1;
 const VESSEL_HEIGHT = 2.6; // ~1.18:1 with diameter 2.2
 const LUG_HEIGHT_FRACTION = 0.32; // where the side support lugs attach
-const LEG_SPLAY_HEIGHT = 1.0;
+const LEG_SPLAY_HEIGHT = 0.45; // was 1.0 — pulled in so legs read as short supports, not spears
 
 // Exterior industrial color: dark royal blue, classic Pfaudler cladding.
 const EXTERIOR_COLOR = 0x1a3d6b;
@@ -63,7 +63,6 @@ export function ReactorMesh({
     for (let i = 0; i < PARTICLE_COUNT; i++) {
       particleRadius[i] = Math.sqrt(Math.random()) * (VESSEL_RADIUS * 0.82);
       particleAngle[i] = Math.random() * Math.PI * 2;
-      // Keep particles within the fill level (roughly bottom 70% of body)
       particleHeight[i] = -VESSEL_HEIGHT * 0.32 + Math.random() * VESSEL_HEIGHT * 0.55;
       particleSpeedMul[i] = 0.6 + Math.random() * 0.8;
     }
@@ -81,8 +80,6 @@ export function ReactorMesh({
     lerped.copy(coldColor).lerp(hotColor, t);
 
     if (materialRef.current) {
-      // Interior glass stays cobalt-based but gains a warm emissive glow
-      // as temperature rises, rather than fully repainting the glass.
       materialRef.current.emissive.copy(lerped);
       materialRef.current.emissiveIntensity = 0.12 + 0.55 * t;
     }
@@ -103,7 +100,7 @@ export function ReactorMesh({
         0,
         1
       );
-      jacketLerped.copy(jacketBaseColor).lerp(hotColor, jt * 0.4); // subtle tint, stays "painted metal"
+      jacketLerped.copy(jacketBaseColor).lerp(hotColor, jt * 0.4);
       jacketMaterialRef.current.emissive.lerp(jacketLerped, 0.08);
     }
 
@@ -126,8 +123,6 @@ export function ReactorMesh({
     }
   });
 
-  // Side-mounted support lugs: brackets partway up the vessel, angled legs
-  // down to the ground, rather than legs bolted flat to the vessel bottom.
   const lugAnchors = useMemo(() => {
     const anchors: { bracket: [number, number, number]; angle: number }[] = [];
     for (let i = 0; i < 4; i++) {
@@ -159,8 +154,8 @@ export function ReactorMesh({
       <pointLight ref={glowRef} position={[0, 0, 0]} distance={4.5} intensity={1} />
 
       {/* Side-mounted support lugs: bracket plate + angled pipe-leg down to
-          the ground, matching the "3 or 4 pipe-legs / lugs mounted to the
-          sides" requirement instead of legs under the vessel floor. */}
+          the ground. LEG_SPLAY_HEIGHT now pulled in so these read as short,
+          sturdy supports rather than long diagonal spears. */}
       {lugAnchors.map(({ bracket, angle }, i) => {
         const groundX = Math.cos(angle) * (VESSEL_RADIUS + LEG_SPLAY_HEIGHT * 0.5);
         const groundZ = Math.sin(angle) * (VESSEL_RADIUS + LEG_SPLAY_HEIGHT * 0.5);
@@ -181,17 +176,14 @@ export function ReactorMesh({
         );
         return (
           <group key={i}>
-            {/* bracket plate bolted to the shell */}
             <mesh position={bracket}>
               <boxGeometry args={[0.16, 0.22, 0.05]} />
               <meshStandardMaterial color={0x2b2f36} metalness={0.6} roughness={0.45} />
             </mesh>
-            {/* angled pipe-leg */}
             <mesh position={mid} quaternion={quaternion}>
-              <cylinderGeometry args={[0.07, 0.08, legLength, 10]} />
+              <cylinderGeometry args={[0.09, 0.1, legLength, 10]} />
               <meshStandardMaterial color={0x2b2f36} metalness={0.6} roughness={0.45} />
             </mesh>
-            {/* foot plate */}
             <mesh position={[groundX, groundY - 0.02, groundZ]}>
               <cylinderGeometry args={[0.14, 0.14, 0.04, 16]} />
               <meshStandardMaterial color={0x1c1f24} metalness={0.5} roughness={0.5} />
@@ -200,9 +192,6 @@ export function ReactorMesh({
         );
       })}
 
-      {/* Main cylindrical body: exterior jacket look (matte-ish dark blue),
-          interior glass surface visible through cutaway. Height:diameter
-          ratio ~1.18:1. */}
       <mesh position={[0, 0, 0]} castShadow>
         <cylinderGeometry args={[VESSEL_RADIUS, VESSEL_RADIUS, VESSEL_HEIGHT, 48, 1, false]} />
         <meshPhysicalMaterial
@@ -219,8 +208,6 @@ export function ReactorMesh({
         />
       </mesh>
 
-      {/* Torispherical-style bottom head, tapering into a conical
-          discharge, rather than a flat hemisphere. */}
       <mesh position={[0, -VESSEL_HEIGHT / 2, 0]} rotation={[Math.PI, 0, 0]} scale={[1, 0.5, 1]}>
         <sphereGeometry args={[VESSEL_RADIUS, 32, 16, 0, Math.PI * 2, 0, Math.PI / 2]} />
         <meshStandardMaterial color={EXTERIOR_COLOR} roughness={0.4} metalness={0.5} />
@@ -229,7 +216,6 @@ export function ReactorMesh({
         <coneGeometry args={[VESSEL_RADIUS * 0.35, 0.5, 24]} />
         <meshStandardMaterial color={EXTERIOR_COLOR} roughness={0.4} metalness={0.5} />
       </mesh>
-      {/* Discharge valve at the base of the cone */}
       <mesh position={[0, -VESSEL_HEIGHT / 2 - 0.72, 0]}>
         <boxGeometry args={[0.22, 0.16, 0.22]} />
         <meshStandardMaterial color={0x2b2f36} metalness={0.7} roughness={0.35} />
@@ -239,32 +225,26 @@ export function ReactorMesh({
         <meshStandardMaterial color={0x71717a} metalness={0.7} roughness={0.35} />
       </mesh>
 
-      {/* Torispherical-style top head. */}
       <mesh position={[0, VESSEL_HEIGHT / 2, 0]} scale={[1, 0.55, 1]}>
         <sphereGeometry args={[VESSEL_RADIUS, 32, 16, 0, Math.PI * 2, 0, Math.PI / 2]} />
         <meshStandardMaterial color={EXTERIOR_COLOR} roughness={0.35} metalness={0.5} />
       </mesh>
 
-      {/* Main manhole: larger oval nozzle with a hinged hatch, offset from
-          center, distinct from the smaller instrument nozzles. */}
       <group position={[-VESSEL_RADIUS * 0.55, VESSEL_HEIGHT / 2 + 0.08, 0.2]} rotation={[0, 0.3, 0]}>
         <mesh scale={[1.3, 1, 0.9]}>
           <cylinderGeometry args={[0.24, 0.24, 0.16, 24]} />
           <meshStandardMaterial color={0x2b2f36} metalness={0.65} roughness={0.4} />
         </mesh>
-        {/* hinged hatch door, slightly ajar to read as functional */}
         <mesh position={[0.28, 0.1, 0]} rotation={[0, 0, 0.5]}>
           <cylinderGeometry args={[0.26, 0.26, 0.04, 24]} />
           <meshStandardMaterial color={0x3a3f47} metalness={0.7} roughness={0.3} />
         </mesh>
-        {/* hinge bracket */}
         <mesh position={[0.05, 0.1, 0.24]}>
           <boxGeometry args={[0.08, 0.08, 0.1]} />
           <meshStandardMaterial color={0x1c1f24} metalness={0.6} roughness={0.4} />
         </mesh>
       </group>
 
-      {/* Smaller top-head instrument/sight-glass nozzles, symmetric array. */}
       {nozzlePositions.map(([x, z], i) => (
         <group key={i} position={[x, VESSEL_HEIGHT / 2 + 0.07, z]}>
           <mesh>
@@ -278,33 +258,25 @@ export function ReactorMesh({
         </group>
       ))}
 
-      {/* Agitator drive assembly: mounting frame, gearbox, and motor
-          stacked above the top head, offset slightly to make room for the
-          manhole/nozzles as in the reference blueprint. */}
       <group position={[0, VESSEL_HEIGHT / 2 + 0.68, 0]}>
-        {/* mounting frame / seal housing directly over the top head */}
         <mesh position={[0, -0.32, 0]}>
           <cylinderGeometry args={[0.22, 0.26, 0.22, 20]} />
           <meshStandardMaterial color={0x2b2f36} metalness={0.55} roughness={0.5} />
         </mesh>
-        {/* reduction gearbox */}
         <mesh position={[0, -0.02, 0]}>
           <boxGeometry args={[0.42, 0.4, 0.42]} />
           <meshStandardMaterial color={0x35393f} metalness={0.5} roughness={0.55} />
         </mesh>
-        {/* motor, offset vertically above the gearbox */}
         <mesh position={[0, 0.42, 0]}>
           <cylinderGeometry args={[0.17, 0.17, 0.55, 20]} />
           <meshStandardMaterial color={0x1e222a} metalness={0.55} roughness={0.5} />
         </mesh>
-        {/* motor fan cowling at the very top */}
         <mesh position={[0, 0.72, 0]}>
           <cylinderGeometry args={[0.19, 0.17, 0.1, 20]} />
           <meshStandardMaterial color={0x111318} metalness={0.6} roughness={0.4} />
         </mesh>
       </group>
 
-      {/* Suspended particle field representing fluid circulation. */}
       <points ref={particlesRef} geometry={particleGeometry}>
         <pointsMaterial
           ref={particleMaterialRef}
@@ -317,16 +289,12 @@ export function ReactorMesh({
         />
       </points>
 
-      {/* Agitator shaft, running from the drive seal down to the lower
-          third of the tank, with a Cryo-Lock style 3-curved-blade
-          impeller near the bottom. */}
       <group ref={agitatorRef} position={[0, VESSEL_HEIGHT / 2, 0]}>
         <mesh>
           <cylinderGeometry args={[0.05, 0.05, VESSEL_HEIGHT * 1.05, 12]} />
           <meshStandardMaterial color={0x333333} metalness={0.75} roughness={0.2} />
         </mesh>
 
-        {/* Three curved, retreating blades near the bottom third. */}
         <group position={[0, -VESSEL_HEIGHT * 0.78, 0]}>
           {[0, 1, 2].map((i) => (
             <group key={i} rotation={[0, (i / 3) * Math.PI * 2, 0]}>
@@ -343,23 +311,16 @@ export function ReactorMesh({
         </group>
       </group>
 
-      {/* Baffle: a flattened vertical paddle hanging from a top flange,
-          standing off the sidewall to break up the vortex. */}
       <mesh position={[0, VESSEL_HEIGHT * 0.05, VESSEL_RADIUS * 0.88]}>
         <boxGeometry args={[0.14, VESSEL_HEIGHT * 0.75, 0.05]} />
         <meshStandardMaterial color={0xb7bcc4} metalness={0.6} roughness={0.3} />
       </mesh>
 
-      {/* Thermowell: a separate hollow tube parallel to the baffle,
-          protecting the temperature probe, per the "d5" tube in the
-          reference blueprint. Runs shorter than the baffle. */}
       <mesh position={[0, VESSEL_HEIGHT * 0.12, -VESSEL_RADIUS * 0.6]}>
         <cylinderGeometry args={[0.045, 0.045, VESSEL_HEIGHT * 0.68, 12]} />
         <meshStandardMaterial color={0x9aa0a8} metalness={0.65} roughness={0.3} />
       </mesh>
 
-      {/* Cooling jacket: encapsulates the lower 70-80% of the main
-          cylinder, painted exterior look rather than a glassy tint. */}
       <group position={[0, -VESSEL_HEIGHT * 0.12, 0]}>
         <mesh>
           <cylinderGeometry args={[VESSEL_RADIUS * 1.15, VESSEL_RADIUS * 1.15, VESSEL_HEIGHT * 0.76, 48, 1, true]} />
