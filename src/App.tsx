@@ -27,6 +27,7 @@ export default function App() {
   const [activePreset, setActivePreset] = useState<PresetKey | null>(null);
   const [cutawayOn, setCutawayOn] = useState(false);
   const [esdActive, setEsdActive] = useState(false);
+  const [faulted, setFaulted] = useState(false);
 
   const liveTempRef = useRef(350);
   const liveCaRef = useRef(0.5);
@@ -65,6 +66,7 @@ export default function App() {
       liveCaRef.current = Ca;
       setTelemetry({ Ca, Cb, T, simTime: engine.getTime() });
       setEsdActive(engine.isEsdTripped());
+      setFaulted(engine.isFaulted());
       rafRef.current = requestAnimationFrame(loop);
     };
     rafRef.current = requestAnimationFrame(loop);
@@ -102,6 +104,20 @@ export default function App() {
     setActivePreset(null);
   };
 
+  const resetEngineToSafeState = () => {
+    clearPresetTimeouts();
+    setActivePreset(null);
+    setAutoMode(false);
+    setTfDisturbance(false);
+    setFlowDisturbance(false);
+    engineRef.current.setDisturbance("Tf", false);
+    engineRef.current.setDisturbance("F", false);
+    engineRef.current.resetState(0.5, 350);
+    engineRef.current.setTc(300);
+    setTc(300);
+    setFaulted(false);
+  };
+
   const handlePresetToggle = (key: PresetKey) => {
     if (activePreset === key) {
       stopPreset();
@@ -110,6 +126,7 @@ export default function App() {
 
     clearPresetTimeouts();
     setActivePreset(key);
+    setFaulted(false);
 
     if (key === "cold") {
       setAutoMode(false);
@@ -165,7 +182,7 @@ export default function App() {
   // to 100% before any conversion has occurred (avoids divide-by-zero).
   const selectivity = totalConverted > 1e-6 ? (telemetry.Cb / totalConverted) * 100 : 100;
 
-  const controlsLocked = esdActive;
+  const controlsLocked = esdActive || faulted;
 
   return (
     <div style={{ height: "100vh", width: "100vw", display: "flex", flexDirection: "column" }}>
@@ -198,13 +215,19 @@ export default function App() {
           </span>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-          {esdActive && (
+          {faulted && (
+            <div style={{ display: "flex", alignItems: "center", fontSize: 11.5, color: "#ff5548", fontWeight: 700 }}>
+              <span className="status-dot" style={{ background: "#ff5548" }} />
+              NUMERICAL FAULT
+            </div>
+          )}
+          {esdActive && !faulted && (
             <div style={{ display: "flex", alignItems: "center", fontSize: 11.5, color: "#ff5548", fontWeight: 700 }}>
               <span className="status-dot" style={{ background: "#ff5548" }} />
               ESD TRIPPED
             </div>
           )}
-          {autoMode && !esdActive && (
+          {autoMode && !esdActive && !faulted && (
             <div style={{ display: "flex", alignItems: "center", fontSize: 11.5, color: "#a78bfa" }}>
               <span className="status-dot" style={{ background: "#a78bfa" }} />
               AUTO CONTROL
@@ -223,7 +246,46 @@ export default function App() {
         </div>
       </header>
 
-      {esdActive && (
+      {faulted && (
+        <div
+          style={{
+            padding: "10px 24px",
+            background: "linear-gradient(90deg, #4a0f0f, #2a0808)",
+            borderBottom: "1px solid #ff5548",
+            color: "#ffb0a8",
+            fontSize: 13,
+            fontWeight: 700,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 10,
+            letterSpacing: 0.3,
+            flexShrink: 0,
+          }}
+        >
+          <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <span style={{ fontSize: 16 }}>⚠</span>
+            NUMERICAL FAULT — the integrator produced a non-finite value and froze state to protect the display.
+          </span>
+          <button
+            onClick={resetEngineToSafeState}
+            style={{
+              padding: "5px 12px",
+              borderRadius: 6,
+              border: "1px solid #ff5548",
+              background: "transparent",
+              color: "#ffb0a8",
+              fontSize: 12,
+              fontWeight: 700,
+              cursor: "pointer",
+            }}
+          >
+            Reset Reactor
+          </button>
+        </div>
+      )}
+
+      {esdActive && !faulted && (
         <div
           style={{
             padding: "10px 24px",
@@ -361,7 +423,9 @@ export default function App() {
                   borderRadius: 8,
                 }}
               >
-                ESD interlock active — controls locked until T ≤ 415 K
+                {faulted
+                  ? "Numerical fault — use Reset Reactor above to recover"
+                  : "ESD interlock active — controls locked until T ≤ 415 K"}
               </div>
             )}
 
@@ -471,7 +535,7 @@ export default function App() {
               borderRadius: 8,
               background: "rgba(13,17,25,0.7)",
               backdropFilter: "blur(6px)",
-              border: esdActive ? "1px solid #ff5548" : "1px solid #1f2733",
+              border: esdActive || faulted ? "1px solid #ff5548" : "1px solid #1f2733",
               fontSize: 12,
               color: "#c3cad6",
             }}

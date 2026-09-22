@@ -12,10 +12,12 @@ export interface CSTRParams {
   Cp: number;
   UA: number;
   Tc: number;
-  // Consecutive side reaction B -> C. Deliberately given a much higher
-  // activation energy than the main reaction, so it's negligible at normal
-  // operating temperature but accelerates sharply during a runaway,
-  // consuming desired product B and forming an undesired byproduct C.
+  // Consecutive side reaction B -> C. Given a higher activation energy than
+  // the main reaction so it's negligible at normal operating temperature
+  // but switches on above ~420-440 K, consuming desired product B and
+  // forming an undesired byproduct C. Tuned so its peak heat release stays
+  // well below the main reaction's, so it perturbs selectivity without
+  // overwhelming the fixed-step RK4 integrator during a runaway.
   k0b: number;
   Eab: number;
   dHrb: number;
@@ -34,9 +36,9 @@ export const defaultParams: CSTRParams = {
   Cp: 0.239,
   UA: 5.0e4,
   Tc: 300,
-  k0b: 4.5e14,
-  Eab: 8.314 * 11500,
-  dHrb: -3.0e4,
+  k0b: 6.159e20,
+  Eab: 8.314 * 21514.7,
+  dHrb: -2.0e4,
 };
 
 // State vector: [Ca, Cb, T]
@@ -51,6 +53,13 @@ type DisturbanceKind = "Tf" | "F";
 // well below that limit (hysteresis prevents rapid trip/reset chatter).
 const ESD_TRIP_TEMP = 440;
 const ESD_RESET_TEMP = 415;
+
+// Hard physical bounds used as a last-resort safety net. If a step ever
+// produces a non-finite value (from parameter tuning mistakes, extreme
+// disturbances, etc.) we freeze the state at its last valid value instead
+// of letting NaN/Infinity propagate into the UI and the 3D render.
+const T_HARD_MAX = 700;
+const T_HARD_MIN = 200;
 
 export class CSTREngine {
   params: CSTRParams;
@@ -69,6 +78,7 @@ export class CSTREngine {
   private flowMagnitude = 40;
 
   private esdTripped = false;
+  private faulted = false;
 
   constructor(initialCa = 0.5, initialT = 350, params: CSTRParams = defaultParams) {
     this.params = { ...params };
@@ -106,6 +116,7 @@ export class CSTREngine {
     this.state[2] = T;
     this.simTime = 0;
     this.esdTripped = false;
+    this.faulted = false;
   }
 
   setDisturbance(kind: DisturbanceKind, active: boolean): void {
@@ -126,17 +137,26 @@ export class CSTREngine {
     return this.esdTripped;
   }
 
+  /** True if the integrator ever produced a non-finite value and had to
+   *  freeze state as a safety fallback. Surfaced so the UI can warn the
+   *  user rather than silently displaying stale numbers forever. */
+  isFaulted(): boolean {
+    return this.faulted;
+  }
+
   private applyDisturbances(): void {
     this.params.Tf = defaultParams.Tf + (this.tfDisturbanceOn ? this.tfMagnitude : 0);
     this.params.F = defaultParams.F + (this.flowDisturbanceOn ? this.flowMagnitude : 0);
   }
 
   /** Checks current temperature against the ESD thresholds and updates the
-   *  trip state with hysteresis. Called once per real-time frame, not per
-   *  RK4 substep, so it reacts to the measured temperature rather than an
-   *  intermediate slope estimate. */
+   *  trip state with hysteresis. Called every RK4 substep (not just once
+   *  per frame) so the interlock engages as soon as possible during a fast
+   *  excursion, rather than only after several substeps have already run
+   *  with the old Tc. */
   private updateEsd(): void {
     const T = this.state[2];
+    if (!Number.isFinite(T)) return;
     if (!this.esdTripped && T >= ESD_TRIP_TEMP) {
       this.esdTripped = true;
     } else if (this.esdTripped && T <= ESD_RESET_TEMP) {
@@ -182,6 +202,10 @@ export class CSTREngine {
     const s = this.state;
     const { k1, k2, k3, k4, tmp, deriv } = this;
 
+    const prevCa = s[0];
+    const prevCb = s[1];
+    const prevT = s[2];
+
     this.derivatives(s, deriv);
     k1[0] = deriv[0];
     k1[1] = deriv[1];
@@ -215,8 +239,23 @@ export class CSTREngine {
     s[1] += (dt / 6) * (k1[1] + 2 * k2[1] + 2 * k3[1] + k4[1]);
     s[2] += (dt / 6) * (k1[2] + 2 * k2[2] + 2 * k3[2] + k4[2]);
 
-    if (s[0] < 0) s[0] = 0;
-    if (s[1] < 0) s[1] = 0;
+    const allFinite = Number.isFinite(s[0]) && Number.isFinite(s[1]) && Number.isFinite(s[2]);
+    if (!allFinite) {
+      // Safety net: never let NaN/Infinity reach the UI or 3D scene. Freeze
+      // at the last good state (clamped to hard physical bounds) and flag
+      // the fault so the caller can surface a warning.
+      s[0] = prevCa;
+      s[1] = prevCb;
+      s[2] = prevT;
+      this.faulted = true;
+    } else {
+      if (s[0] < 0) s[0] = 0;
+      if (s[1] < 0) s[1] = 0;
+      if (s[2] > T_HARD_MAX) s[2] = T_HARD_MAX;
+      if (s[2] < T_HARD_MIN) s[2] = T_HARD_MIN;
+    }
+
+    this.updateEsd();
     this.simTime += dt;
   }
 
@@ -226,9 +265,6 @@ export class CSTREngine {
     for (let i = 0; i < substeps; i++) {
       this.step(h);
     }
-    // Check the interlock once per real-time frame, against the settled
-    // measured temperature, not mid-substep.
-    this.updateEsd();
   }
 }
 
