@@ -18,7 +18,7 @@ export default function App() {
   const lastTimeRef = useRef<number>(performance.now());
   const presetTimeoutsRef = useRef<number[]>([]);
 
-  const [telemetry, setTelemetry] = useState({ Ca: 0.5, T: 350, simTime: 0 });
+  const [telemetry, setTelemetry] = useState({ Ca: 0.5, Cb: 0, T: 350, simTime: 0 });
   const [tc, setTc] = useState(defaultParams.Tc);
   const [tfDisturbance, setTfDisturbance] = useState(false);
   const [flowDisturbance, setFlowDisturbance] = useState(false);
@@ -26,6 +26,7 @@ export default function App() {
   const [setpoint, setSetpoint] = useState(330);
   const [activePreset, setActivePreset] = useState<PresetKey | null>(null);
   const [cutawayOn, setCutawayOn] = useState(false);
+  const [esdActive, setEsdActive] = useState(false);
 
   const liveTempRef = useRef(350);
   const liveCaRef = useRef(0.5);
@@ -59,10 +60,11 @@ export default function App() {
       }
 
       engine.advanceRealTime(dtSeconds, simMinutesPerSecond, 4);
-      const { Ca, T } = engine.getState();
+      const { Ca, Cb, T } = engine.getState();
       liveTempRef.current = T;
       liveCaRef.current = Ca;
-      setTelemetry({ Ca, T, simTime: engine.getTime() });
+      setTelemetry({ Ca, Cb, T, simTime: engine.getTime() });
+      setEsdActive(engine.isEsdTripped());
       rafRef.current = requestAnimationFrame(loop);
     };
     rafRef.current = requestAnimationFrame(loop);
@@ -157,6 +159,13 @@ export default function App() {
     thermalState === "RUNAWAY RISK" ? "#ff5548" : thermalState === "ELEVATED" ? "#ffb545" : "#34d399";
 
   const conversion = (1 - telemetry.Ca / defaultParams.Caf) * 100;
+  const totalConverted = defaultParams.Caf - telemetry.Ca;
+  // Selectivity: what fraction of converted A is still present as desired
+  // product B, versus having degraded further into byproduct C. Falls back
+  // to 100% before any conversion has occurred (avoids divide-by-zero).
+  const selectivity = totalConverted > 1e-6 ? (telemetry.Cb / totalConverted) * 100 : 100;
+
+  const controlsLocked = esdActive;
 
   return (
     <div style={{ height: "100vh", width: "100vw", display: "flex", flexDirection: "column" }}>
@@ -189,7 +198,13 @@ export default function App() {
           </span>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-          {autoMode && (
+          {esdActive && (
+            <div style={{ display: "flex", alignItems: "center", fontSize: 11.5, color: "#ff5548", fontWeight: 700 }}>
+              <span className="status-dot" style={{ background: "#ff5548" }} />
+              ESD TRIPPED
+            </div>
+          )}
+          {autoMode && !esdActive && (
             <div style={{ display: "flex", alignItems: "center", fontSize: 11.5, color: "#a78bfa" }}>
               <span className="status-dot" style={{ background: "#a78bfa" }} />
               AUTO CONTROL
@@ -207,6 +222,28 @@ export default function App() {
           </div>
         </div>
       </header>
+
+      {esdActive && (
+        <div
+          style={{
+            padding: "10px 24px",
+            background: "linear-gradient(90deg, #4a0f0f, #2a0808)",
+            borderBottom: "1px solid #ff5548",
+            color: "#ffb0a8",
+            fontSize: 13,
+            fontWeight: 700,
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+            letterSpacing: 0.3,
+            flexShrink: 0,
+          }}
+        >
+          <span style={{ fontSize: 16 }}>⚠</span>
+          EMERGENCY SHUTDOWN ACTIVE — Tc forced to minimum (250 K) until reactor temperature falls below 415 K.
+          Manual and auto control are locked out.
+        </div>
+      )}
 
       <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
         <div
@@ -251,8 +288,15 @@ export default function App() {
           <Card>
             <SectionLabel>Live Telemetry</SectionLabel>
             <Metric label="Concentration, Ca" value={`${telemetry.Ca.toFixed(4)} mol/L`} mono />
+            <Metric label="Concentration, Cb" value={`${telemetry.Cb.toFixed(4)} mol/L`} mono />
             <Metric label="Reactor Temperature, T" value={`${telemetry.T.toFixed(2)} K`} mono />
             <Metric label="Conversion" value={`${conversion.toFixed(1)} %`} mono />
+            <Metric
+              label="Selectivity to B"
+              value={`${selectivity.toFixed(1)} %`}
+              mono
+              valueColor={selectivity < 85 ? "#ffb545" : "#eef1f6"}
+            />
             <Metric label="Sim Time" value={`${telemetry.simTime.toFixed(1)} min`} mono />
             <div style={{ height: 1, background: "#1f2733", margin: "10px 0" }} />
             <Metric label="Thermal State" value={thermalState} valueColor={stateColor} />
@@ -303,11 +347,29 @@ export default function App() {
 
           <Card>
             <SectionLabel>Temperature Control</SectionLabel>
+
+            {controlsLocked && (
+              <div
+                style={{
+                  fontSize: 11.5,
+                  color: "#ff5548",
+                  fontWeight: 700,
+                  marginBottom: 12,
+                  padding: "8px 10px",
+                  background: "rgba(255,85,72,0.08)",
+                  border: "1px solid rgba(255,85,72,0.3)",
+                  borderRadius: 8,
+                }}
+              >
+                ESD interlock active — controls locked until T ≤ 415 K
+              </div>
+            )}
+
             <ToggleRow
               label={autoMode ? "Auto (PI Control)" : "Manual"}
               detail={autoMode ? "Controller is adjusting Tc" : "You are adjusting Tc"}
               checked={autoMode}
-              onChange={() => setAutoMode((v) => !v)}
+              onChange={() => !controlsLocked && setAutoMode((v) => !v)}
               accentColor="#a78bfa"
             />
 
@@ -326,6 +388,7 @@ export default function App() {
                   max={420}
                   step={0.5}
                   value={setpoint}
+                  disabled={controlsLocked}
                   onChange={(e) => setSetpoint(parseFloat(e.target.value))}
                 />
               </div>
@@ -348,9 +411,9 @@ export default function App() {
               max={450}
               step={0.5}
               value={tc}
-              disabled={autoMode}
+              disabled={autoMode || controlsLocked}
               onChange={(e) => handleTcChange(parseFloat(e.target.value))}
-              style={autoMode ? { opacity: 0.4, cursor: "not-allowed" } : undefined}
+              style={autoMode || controlsLocked ? { opacity: 0.4, cursor: "not-allowed" } : undefined}
             />
             <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "#5b6577", marginTop: 6 }}>
               <span>250 K · cold</span>
@@ -408,7 +471,7 @@ export default function App() {
               borderRadius: 8,
               background: "rgba(13,17,25,0.7)",
               backdropFilter: "blur(6px)",
-              border: "1px solid #1f2733",
+              border: esdActive ? "1px solid #ff5548" : "1px solid #1f2733",
               fontSize: 12,
               color: "#c3cad6",
             }}
