@@ -21,11 +21,9 @@ The reactor is modeled with the standard non-isothermal CSTR mass and energy bal
 
 Mass balance (reactant concentration, Ca):
 
-text
 dCa/dt = (F/V)(Caf - Ca) - k0 * exp(-Ea / (R*T)) * Ca
 Energy balance (reactor temperature, T):
 
-text
 dT/dt = (F/V)(Tf - T) + (-ΔHr / (ρ*Cp)) * k0 * exp(-Ea / (R*T)) * Ca - (UA / (V*ρ*Cp)) * (T - Tc)
 Here F is feed flow rate, V is reactor volume, Caf/Tf are feed concentration/temperature, k0/Ea are the Arrhenius kinetic parameters, ΔHr is heat of reaction, ρ/Cp are density and specific heat capacity, UA is the jacket heat transfer coefficient, and Tc is the cooling jacket temperature, which is the main thing you're controlling in this app.
 
