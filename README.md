@@ -6,17 +6,17 @@ An interactive, web-based digital twin of a non-isothermal Continuous Stirred-Ta
 
 Thermal State: NOMINAL
 
-Motivation
+Motivation:
 This started from a question rather than a feature list: what actually makes chemical engineering consulting hard, beyond the thermodynamics itself? Looking into that turned up a theme that shows up again and again in engineering-communication literature. The real bottleneck usually isn't computing the right answer. It's getting a non-technical client, financial stakeholder, or operator to understand that answer well enough to actually trust it. Engineers tend to be trained as diagnostic listeners who jump straight to a technical fix, but clients are often trying to express operational anxiety or business risk, and a wall of equations or a static PDF rarely closes that gap.
 
 One idea that keeps coming up as a fix is the "digital twin," though the term gets stretched pretty thin in practice. There's a real difference between a static digital model (you drive it manually, no live data feed), a digital shadow (a one-way feed from sensors into a visualization), and an actual digital twin (two-way, closed-loop control). For a student project meant to make reactor behavior tangible to someone without a chemical engineering background, building a properly interactive digital model that behaves dynamically in real time is the realistic target. You don't need live plant sensors to prove the point that watching a system respond beats reading a paragraph about it.
 
 That's basically the gap this project is trying to close, just at a small scale. Instead of describing thermal runaway or controller behavior in the abstract, you can drag a slider, throw in a disturbance, and watch the reactor's temperature either settle down or run away in real time. It's the same instinct behind why HAZOP-style hazard reviews are leaning more on simulation these days, rather than asking a room full of people to mentally model cascading pressure or temperature deviations off a P&ID alone.
 
-What This Demonstrates
+What This Demonstrates:
 This models a classic chemical engineering control problem: a first-order exothermic reaction (A → B) in a jacketed CSTR. The reactor shows bistable steady-state behavior, meaning the exact same cooling jacket temperature can correspond to either a safe, low-conversion state or a dangerous, high-temperature runaway state, depending on how the reactor got there. You can explore that nonlinear behavior interactively, then close the loop with a working PI controller that actively rejects disturbances and holds a target temperature.
 
-Governing Equations
+Governing Equations:
 The reactor is modeled with the standard non-isothermal CSTR mass and energy balance.
 
 Mass balance (reactant concentration, Ca):
@@ -31,7 +31,7 @@ Here F is feed flow rate, V is reactor volume, Caf/Tf are feed concentration/tem
 
 These are integrated numerically with 4th-order Runge-Kutta (RK4). Simpler methods like Euler integration tend to go unstable here, since the reaction rate and temperature are tightly coupled and the system gets moderately stiff.
 
-Architecture
+Architecture:
 File	Responsibility
 simulation.ts	CSTREngine (RK4 integrator, pre-allocated Float64Array state buffers to avoid GC pauses), disturbance injection, and PIController (closed-loop temperature control with anti-windup)
 App.tsx	Dashboard UI, requestAnimationFrame telemetry loop, scenario presets, control state
@@ -41,7 +41,7 @@ PhasePortraitChart.tsx	Canvas-based Ca-vs-T phase plane trajectory plot
 Performance Notes
 The physics engine uses pre-allocated Float64Array buffers for all the RK4 intermediate calculations (k1–k4, scratch state, derivatives), so the 60 FPS simulation loop doesn't allocate anything on the heap per frame. That avoids the garbage collection pauses that would otherwise cause visible stutter. The 3D particle system and both charts follow the same idea, using Float32Array/Float64Array ring buffers that get updated in place rather than creating new objects every frame.
 
-Features
+Features:
 Live telemetry dashboard showing Ca, T, conversion %, and thermal state (NOMINAL / ELEVATED / RUNAWAY RISK), updating at 60 FPS.
 
 Interactive cooling jacket control, a real-time slider for Tc that instantly shifts reactor thermodynamics.
