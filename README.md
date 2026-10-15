@@ -101,9 +101,7 @@ Three built-in presets demonstrate different aspects of the reactor's behavior:
 - **Side-reaction kinetics tuned for stability, not fitted to data:** The B → C reaction parameters were chosen to be physically plausible (higher activation energy than the main reaction, so it's negligible at normal temperature) and numerically well-behaved with the fixed-step RK4 integrator, but were not fitted to experimental kinetic data.
 - **Fixed-step RK4:** The integrator uses a fixed timestep rather than adaptive stepping, which limits how extreme a transient the model can resolve before numerical safeguards engage.
 
-## Results
 
-*(Screenshots and short clips of the energy balance chart, reaction pathway diagram, and a runaway/recovery sequence to be added here.)*
 
 ## References
 
