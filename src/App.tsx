@@ -16,8 +16,6 @@ import { PhasePortraitChart } from "./PhasePortraitChart";
 import { ReactionPathway } from "./ReactionPathway";
 import { EnergyBalanceChart } from "./EnergyBalanceChart";
 
-const COLD_T = 300;
-const HOT_T = 450;
 
 type PresetKey = "cold" | "runaway" | "rejection";
 
@@ -27,6 +25,132 @@ const SENSITIVITY_LABELS: Record<SensitivityKey, string> = {
   UA: "Heat Transfer Coeff. (UA)",
   dHr: "Heat of Reaction (dHr)",
 };
+
+function Card({ children }: { children: React.ReactNode }) {
+  return (
+    <div
+      style={{
+        background: "#0d1218",
+        border: "1px solid #1f2733",
+        borderRadius: 12,
+        padding: "14px 14px 12px",
+        boxShadow: "inset 0 1px 0 rgba(255,255,255,0.02)",
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
+function SectionLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <div
+      style={{
+        fontSize: 11,
+        fontWeight: 700,
+        letterSpacing: 0.18,
+        color: "#8a94a6",
+        textTransform: "uppercase",
+        marginBottom: 12,
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
+function Metric({
+  label,
+  value,
+  mono = false,
+  valueColor,
+}: {
+  label: string;
+  value: string;
+  mono?: boolean;
+  valueColor?: string;
+}) {
+  return (
+    <div style={{ display: "flex", justifyContent: "space-between", gap: 8, padding: "3px 0" }}>
+      <span style={{ fontSize: 12.5, color: "#8a94a6" }}>{label}</span>
+      <span
+        className={mono ? "mono" : undefined}
+        style={{
+          fontSize: 12.5,
+          color: valueColor ?? "#eef1f6",
+          fontWeight: 700,
+          textAlign: "right",
+        }}
+      >
+        {value}
+      </span>
+    </div>
+  );
+}
+
+function ToggleRow({
+  label,
+  detail,
+  checked,
+  onChange,
+  accentColor,
+}: {
+  label: string;
+  detail: string;
+  checked: boolean;
+  onChange: () => void;
+  accentColor: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onChange}
+      style={{
+        width: "100%",
+        border: "1px solid #1f2733",
+        borderRadius: 10,
+        background: checked ? "rgba(255,255,255,0.02)" : "transparent",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        padding: "10px 10px",
+        cursor: "pointer",
+        color: "#eef1f6",
+        textAlign: "left",
+      }}
+    >
+      <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+        <span style={{ fontSize: 13, fontWeight: 700 }}>{label}</span>
+        <span style={{ fontSize: 11, color: "#8a94a6" }}>{detail}</span>
+      </div>
+      <span
+        style={{
+          width: 26,
+          height: 16,
+          borderRadius: 999,
+          background: checked ? accentColor : "#2a313d",
+          position: "relative",
+          boxShadow: checked ? `0 0 0 1px ${accentColor}` : "inset 0 0 0 1px rgba(255,255,255,0.08)",
+          display: "inline-block",
+          flexShrink: 0,
+        }}
+      >
+        <span
+          style={{
+            position: "absolute",
+            top: 2,
+            left: checked ? 14 : 2,
+            width: 10,
+            height: 10,
+            borderRadius: "50%",
+            background: "#fff",
+            transition: "left 0.2s ease",
+          }}
+        />
+      </span>
+    </button>
+  );
+}
 
 export default function App() {
   const engineRef = useRef<CSTREngine>(new CSTREngine(0.5, 350, defaultParams));
@@ -75,11 +199,6 @@ export default function App() {
       lastTimeRef.current = now;
       const simMinutesPerSecond = 0.5;
 
-      // While the ESD is latched, the controller must not keep computing
-      // and writing new Tc commands — that value gets applied the instant
-      // the trip is acknowledged, so if auto mode were left running against
-      // a hot measured T, it would just windup toward max heat and slam
-      // the reactor right back into another trip.
       if (autoModeRef.current && !engine.isEsdTripped()) {
         const dtMinutes = dtSeconds * simMinutesPerSecond;
         const { T } = engine.getState();
@@ -151,11 +270,6 @@ export default function App() {
     setEsdActive(false);
   };
 
-  /** Operator acknowledgment: only takes effect once temperature has
-   *  genuinely fallen below the reset threshold (engine enforces this).
-   *  Also pulls the setpoint back to a safe value and drops out of auto
-   *  mode, so acknowledging doesn't immediately walk the reactor back into
-   *  the same trip condition that caused the shutdown. */
   const handleAcknowledgeEsd = () => {
     const cleared = engineRef.current.acknowledgeEsd();
     if (cleared) {
@@ -175,7 +289,7 @@ export default function App() {
   };
 
   const handleSensitivityKeyChange = (value: string) => {
-    const key = (value === "none" ? null : (value as SensitivityKey));
+    const key = value === "none" ? null : (value as SensitivityKey);
     setSensitivityKey(key);
     setSensitivityPct(0);
     applySensitivity(key, 0);
@@ -251,9 +365,6 @@ export default function App() {
 
   const conversion = (1 - telemetry.Ca / defaultParams.Caf) * 100;
   const totalConverted = defaultParams.Caf - telemetry.Ca;
-  // Selectivity: what fraction of converted A is still present as desired
-  // product B, versus having degraded further into byproduct C. Falls back
-  // to 100% before any conversion has occurred (avoids divide-by-zero).
   const selectivity = totalConverted > 1e-6 ? (telemetry.Cb / totalConverted) * 100 : 100;
 
   const controlsLocked = esdActive || faulted;
@@ -495,7 +606,7 @@ export default function App() {
           </Card>
 
           <Card>
-            <SectionLabel>Phase Portrait</SectionLabel>
+            <SectionLabel>Phase Portrait ($T$ vs $C_A$)</SectionLabel>
             <PhasePortraitChart
               getCa={() => liveCaRef.current}
               getT={() => liveTempRef.current}
@@ -503,6 +614,7 @@ export default function App() {
               caMax={1.0}
               tMin={260}
               tMax={460}
+              tripTemp={440}
             />
           </Card>
 
@@ -699,119 +811,16 @@ export default function App() {
             <fog attach="fog" args={["#05070a", 8, 18]} />
             <ReactorMesh
               getTemperature={() => liveTempRef.current}
-              getCoolingTemp={() => tc}
-              coldTemp={COLD_T}
-              hotTemp={HOT_T}
-              cutawayEnabled={cutawayOn}
             />
-            <ContactShadows position={[0, -1.6, 0]} opacity={0.4} scale={10} blur={2.5} far={4} />
-            <Grid
-              position={[0, -1.6, 0]}
-              args={[20, 20]}
-              cellColor="#161d29"
-              sectionColor="#212c3f"
-              fadeDistance={12}
-              infiniteGrid
-            />
-            <Environment preset="warehouse" />
-            <OrbitControls enableDamping dampingFactor={0.08} minDistance={3} maxDistance={10} />
+            <ambientLight intensity={0.6} />
+            <directionalLight position={[5, 8, 5]} intensity={1.2} castShadow />
+            <Environment preset="city" />
+            <ContactShadows position={[0, -1.5, 0]} opacity={0.35} scale={10} blur={2} />
+            <Grid position={[0, -1.51, 0]} args={[10, 10]} />
+            <OrbitControls makeDefault />
           </Canvas>
-
-          <div
-            style={{
-              position: "absolute",
-              top: 16,
-              right: 16,
-              padding: "8px 14px",
-              borderRadius: 8,
-              background: "rgba(13,17,25,0.7)",
-              backdropFilter: "blur(6px)",
-              border: esdActive || faulted ? "1px solid #ff5548" : "1px solid #1f2733",
-              fontSize: 12,
-              color: "#c3cad6",
-            }}
-          >
-            T = <span className="mono" style={{ color: stateColor, fontWeight: 700 }}>{telemetry.T.toFixed(1)} K</span>
-          </div>
         </div>
       </div>
-    </div>
-  );
-}
-
-function ToggleRow({
-  label,
-  detail,
-  checked,
-  onChange,
-  accentColor,
-}: {
-  label: string;
-  detail: string;
-  checked: boolean;
-  onChange: () => void;
-  accentColor: string;
-}) {
-  return (
-    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-      <div>
-        <div style={{ fontSize: 12.5, fontWeight: 600, color: "#eef1f6" }}>{label}</div>
-        <div className="mono" style={{ fontSize: 10.5, color: checked ? accentColor : "#5b6577", marginTop: 2 }}>
-          {detail}
-        </div>
-      </div>
-      <label className="toggle-switch">
-        <input type="checkbox" checked={checked} onChange={onChange} />
-        <span
-          className="toggle-slider"
-          style={checked ? { background: `${accentColor}55`, borderColor: accentColor } : undefined}
-        />
-      </label>
-    </div>
-  );
-}
-
-function Card({ children, subtle = false }: { children: React.ReactNode; subtle?: boolean }) {
-  return (
-    <div
-      className="fade-in"
-      style={{
-        padding: 13,
-        borderRadius: 12,
-        background: subtle ? "transparent" : "#0f1420",
-        border: subtle ? "1px dashed #232c3a" : "1px solid #1f2733",
-      }}
-    >
-      {children}
-    </div>
-  );
-}
-
-function SectionLabel({ children }: { children: React.ReactNode }) {
-  return (
-    <div style={{ fontSize: 11, letterSpacing: 0.6, textTransform: "uppercase", color: "#5b6577", marginBottom: 12, fontWeight: 600 }}>
-      {children}
-    </div>
-  );
-}
-
-function Metric({
-  label,
-  value,
-  valueColor = "#eef1f6",
-  mono = false,
-}: {
-  label: string;
-  value: string;
-  valueColor?: string;
-  mono?: boolean;
-}) {
-  return (
-    <div style={{ display: "flex", justifyContent: "space-between", padding: "5px 0" }}>
-      <span style={{ fontSize: 12.5, color: "#8a94a6" }}>{label}</span>
-      <span className={mono ? "mono" : ""} style={{ fontSize: 13, fontWeight: 600, color: valueColor }}>
-        {value}
-      </span>
     </div>
   );
 }
