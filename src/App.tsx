@@ -16,6 +16,8 @@ import { PhasePortraitChart } from "./PhasePortraitChart";
 import { ReactionPathway } from "./ReactionPathway";
 import { EnergyBalanceChart } from "./EnergyBalanceChart";
 
+const COLD_T = 300;
+const HOT_T = 450;
 
 type PresetKey = "cold" | "runaway" | "rejection";
 

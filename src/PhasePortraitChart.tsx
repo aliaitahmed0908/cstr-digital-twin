@@ -1,8 +1,11 @@
 import { useEffect, useRef } from "react";
+import { defaultParams } from "./simulation";
 
 interface PhasePortraitChartProps {
   getCa: () => number;
   getT: () => number;
+  getTc: () => number;
+  getTf?: () => number;
   caMin?: number;
   caMax?: number;
   tMin?: number;
@@ -14,6 +17,8 @@ interface PhasePortraitChartProps {
 export function PhasePortraitChart({
   getCa,
   getT,
+  getTc,
+  getTf,
   caMin = 0,
   caMax = 1.0,
   tMin = 260,
@@ -23,7 +28,6 @@ export function PhasePortraitChart({
 }: PhasePortraitChartProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   
-  // High-performance ring buffer
   const caTrail = useRef<Float64Array>(new Float64Array(trailLength));
   const tTrail = useRef<Float64Array>(new Float64Array(trailLength));
   const writeIndex = useRef(0);
@@ -62,27 +66,26 @@ export function PhasePortraitChart({
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.clearRect(0, 0, w, h);
 
-      // 3. Layout Padding for Axis Labels
-      const padding = { top: 15, right: 15, bottom: 30, left: 45 };
+      // 3. Layout Padding
+      const padding = { top: 20, right: 15, bottom: 30, left: 45 };
       const plotW = w - padding.left - padding.right;
       const plotH = h - padding.top - padding.bottom;
 
       const mapCaToX = (val: number) =>
-        padding.left + Math.max(0, Math.min(1, (val - caMin) / (caMax - caMin))) * plotW;
+        padding.left + Math.max(-0.5, Math.min(1.5, (val - caMin) / (caMax - caMin))) * plotW;
       const mapTempToY = (val: number) =>
-        padding.top + plotH - Math.max(0, Math.min(1, (val - tMin) / (tMax - tMin))) * plotH;
+        padding.top + plotH - Math.max(-0.5, Math.min(1.5, (val - tMin) / (tMax - tMin))) * plotH;
 
-      // Background fill
       ctx.fillStyle = "#0a0d13";
       ctx.fillRect(0, 0, w, h);
 
-      // Grid Lines & Font Setup
+      // Grid Lines
       ctx.strokeStyle = "#1f2733";
       ctx.lineWidth = 1;
       ctx.fillStyle = "#5b6577";
       ctx.font = "10px monospace";
 
-      // X-Axis (Ca) Grid & Ticks
+      // X-Axis (Ca) Ticks
       for (let i = 0; i <= 4; i++) {
         const v = caMin + (i / 4) * (caMax - caMin);
         const x = mapCaToX(v);
@@ -94,7 +97,7 @@ export function PhasePortraitChart({
         ctx.fillText(v.toFixed(2), x, padding.top + plotH + 14);
       }
 
-      // Y-Axis (T) Grid & Ticks
+      // Y-Axis (T) Ticks
       for (let i = 0; i <= 4; i++) {
         const v = tMin + (i / 4) * (tMax - tMin);
         const y = mapTempToY(v);
@@ -106,7 +109,7 @@ export function PhasePortraitChart({
         ctx.fillText(`${Math.round(v)}K`, padding.left - 6, y + 3);
       }
 
-      // Emergency Shutdown Threshold Line (440 K)
+      // Emergency Shutdown Threshold Line
       if (tripTemp >= tMin && tripTemp <= tMax) {
         const tripY = mapTempToY(tripTemp);
         ctx.setLineDash([4, 4]);
@@ -119,7 +122,78 @@ export function PhasePortraitChart({
         ctx.setLineDash([]);
       }
 
-      // 4. Draw Trajectory Trail
+      // --- 4. THEORETICAL NULLCLINES ---
+      const currentTc = getTc();
+      const currentTf = getTf ? getTf() : ((defaultParams as any).Tf ?? 350);
+      
+      const F = (defaultParams as any).F ?? 100;
+      const V = (defaultParams as any).V ?? 100;
+      const Caf = (defaultParams as any).Caf ?? 1.0;
+      const R = (defaultParams as any).R ?? 8.314;
+      const rho = (defaultParams as any).rho ?? 1000;
+      const Cp = (defaultParams as any).Cp ?? 4.18;
+      const rhoCp = (defaultParams as any).rhoCp ?? (rho * Cp);
+      const k0 = defaultParams.k0;
+      const Ea = defaultParams.Ea;
+      const dHr = defaultParams.dHr;
+      const UA = defaultParams.UA;
+      const tau = V / F;
+
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([4, 4]);
+
+      // A. Concentration Nullcline (dCa/dt = 0)
+      ctx.beginPath();
+      ctx.strokeStyle = "rgba(167, 139, 250, 0.6)"; // Purple
+      let startedCa = false;
+      for (let T = tMin; T <= tMax; T += 2) {
+        const k1 = k0 * Math.exp(-Ea / (R * T));
+        const Ca_null = Caf / (1 + k1 * tau);
+        const x = mapCaToX(Ca_null);
+        const y = mapTempToY(T);
+        if (!startedCa) { ctx.moveTo(x, y); startedCa = true; }
+        else { ctx.lineTo(x, y); }
+      }
+      ctx.stroke();
+
+      // B. Thermal Nullcline (dT/dt = 0)
+      ctx.beginPath();
+      ctx.strokeStyle = "rgba(251, 146, 60, 0.6)"; // Orange
+      let startedT = false;
+      for (let T = tMin; T <= tMax; T += 2) {
+        const k1 = k0 * Math.exp(-Ea / (R * T));
+        let heatGenFactor = (Math.abs(dHr) / rhoCp) * k1;
+        
+        if ((defaultParams as any).k02 && (defaultParams as any).Ea2) {
+          const k2 = (defaultParams as any).k02 * Math.exp(-(defaultParams as any).Ea2 / (R * T));
+          heatGenFactor += (Math.abs((defaultParams as any).dHr2) / rhoCp) * k2 * (k1 / (1 / tau + k2));
+        }
+        
+        const heatRemoval = (T - currentTf) / tau + (UA / (rhoCp * V)) * (T - currentTc);
+        
+        if (heatGenFactor > 1e-10) {
+          const Ca_null = heatRemoval / heatGenFactor;
+          if (Ca_null >= -0.2 && Ca_null <= caMax + 0.2) {
+            const x = mapCaToX(Ca_null);
+            const y = mapTempToY(T);
+            if (!startedT) { ctx.moveTo(x, y); startedT = true; }
+            else { ctx.lineTo(x, y); }
+          } else {
+            startedT = false;
+          }
+        }
+      }
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      // Legend
+      ctx.textAlign = "right";
+      ctx.fillStyle = "rgba(167, 139, 250, 0.9)";
+      ctx.fillText("dCa/dt = 0", padding.left + plotW - 5, padding.top + 5);
+      ctx.fillStyle = "rgba(251, 146, 60, 0.9)";
+      ctx.fillText("dT/dt = 0", padding.left + plotW - 5, padding.top + 18);
+
+      // --- 5. Draw Live Trajectory Trail ---
       const count = filled.current;
       if (count > 1) {
         const startIdx = writeIndex.current - count;
@@ -135,7 +209,7 @@ export function PhasePortraitChart({
           const y2 = mapTempToY(tTrail.current[idxCurr]);
           
           const alpha = i / count;
-          ctx.strokeStyle = `rgba(56, 189, 248, ${alpha})`; // Cyan trail fade
+          ctx.strokeStyle = `rgba(56, 189, 248, ${alpha})`;
           
           ctx.beginPath();
           ctx.moveTo(x1, y1);
@@ -151,7 +225,6 @@ export function PhasePortraitChart({
 
         ctx.beginPath();
         ctx.arc(cx, cy, 4, 0, Math.PI * 2);
-        // Dot turns red if tripping, otherwise stays cyan
         ctx.fillStyle = currentT >= tripTemp ? "#ff5548" : "#38bdf8";
         ctx.fill();
       }
@@ -161,7 +234,7 @@ export function PhasePortraitChart({
 
     rafRef.current = requestAnimationFrame(draw);
     return () => cancelAnimationFrame(rafRef.current);
-  }, [getCa, getT, caMin, caMax, tMin, tMax, tripTemp, trailLength]);
+  }, [getCa, getT, getTc, getTf, caMin, caMax, tMin, tMax, tripTemp, trailLength]);
 
   return (
     <div style={{ width: "100%" }}>
