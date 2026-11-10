@@ -1,4 +1,3 @@
-
 import { useRef, useMemo } from "react";
 import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
@@ -21,7 +20,55 @@ const LUG_HEIGHT_FRACTION = 0.32;
 const LEG_SPLAY_HEIGHT = 0.45;
 
 const EXTERIOR_COLOR = 0x1a3d6b;
-const GLASS_BASE_COLOR = 0x0a3d5c;
+
+// Custom GLSL Shader for Thermal Wall Glow (Transitions from Cool Steel Blue to Incandescent Red >400K)
+const ThermalWallShaderMaterial = {
+  uniforms: {
+    uTemperature: { value: 350.0 },
+    uCutaway: { value: 0.0 },
+  },
+  vertexShader: `
+    varying vec3 vNormal;
+    varying vec3 vPosition;
+    void main() {
+      vNormal = normalize(normalMatrix * normal);
+      vPosition = position;
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    }
+  `,
+  fragmentShader: `
+    varying vec3 vNormal;
+    varying vec3 vPosition;
+    uniform float uTemperature;
+    uniform float uCutaway;
+
+    void main() {
+      // Cutaway clipping check based on Z plane if cutaway is enabled
+      if (uCutaway > 0.5 && vPosition.z < 0.0 && vPosition.y > -1.0 && vPosition.y < 1.0) {
+        discard;
+      }
+
+      // Rim lighting for metallic sheen
+      float intensity = pow(0.6 - dot(vNormal, vec3(0, 0, 1)), 2.0);
+      vec3 baseSteel = vec3(0.08, 0.15, 0.28) + vec3(0.25) * intensity;
+
+      // Thermal glow factor (crosses threshold around 400K toward runaway risk)
+      float tFactor = clamp((uTemperature - 380.0) / 70.0, 0.0, 1.0);
+      
+      vec3 coolColor = baseSteel;
+      vec3 hotColor = vec3(0.95, 0.22, 0.08) * (1.0 + tFactor * 1.8); // Incandescent red glow
+
+      vec3 finalColor = mix(coolColor, hotColor, tFactor);
+
+      // Inner fluid level tint
+      if (vPosition.y < -0.1) {
+        finalColor += vec3(0.0, 0.1, 0.15) * (tFactor * 0.4);
+      }
+
+      gl_FragColor = vec4(finalColor, 1.0);
+    }
+  `,
+};
 
 export function ReactorMesh({
   getTemperature,
@@ -32,18 +79,29 @@ export function ReactorMesh({
   jacketHotTemp = 350,
   cutawayEnabled = false,
 }: ReactorMeshProps) {
-  const materialRef = useRef<THREE.MeshPhysicalMaterial>(null);
+  const shaderMaterialRef = useRef<THREE.ShaderMaterial>(null);
   const jacketMaterialRef = useRef<THREE.MeshStandardMaterial>(null);
   const glowRef = useRef<THREE.PointLight>(null);
   const agitatorRef = useRef<THREE.Group>(null);
   const particlesRef = useRef<THREE.Points>(null);
   const particleMaterialRef = useRef<THREE.PointsMaterial>(null);
 
-  const coldColor = useMemo(() => new THREE.Color(0x1e6fff), []);
   const hotColor = useMemo(() => new THREE.Color(0xff2a1e), []);
   const lerped = useMemo(() => new THREE.Color(), []);
   const jacketBaseColor = useMemo(() => new THREE.Color(EXTERIOR_COLOR), []);
   const jacketLerped = useMemo(() => new THREE.Color(), []);
+
+  // Create custom shader material instance once
+  const customShaderMat = useMemo(
+    () =>
+      new THREE.ShaderMaterial({
+        uniforms: THREE.UniformsUtils.clone(ThermalWallShaderMaterial.uniforms),
+        vertexShader: ThermalWallShaderMaterial.vertexShader,
+        fragmentShader: ThermalWallShaderMaterial.fragmentShader,
+        side: THREE.DoubleSide,
+      }),
+    []
+  );
 
   const cutawayPlane = useMemo(() => new THREE.Plane(new THREE.Vector3(0, 0, 1), 0), []);
   const clippingPlanes = useMemo(
@@ -75,14 +133,14 @@ export function ReactorMesh({
   useFrame((_, delta) => {
     const T = getTemperature();
     const t = THREE.MathUtils.clamp((T - coldTemp) / (hotTemp - coldTemp), 0, 1);
-    lerped.copy(coldColor).lerp(hotColor, t);
 
-    if (materialRef.current) {
-      materialRef.current.emissive.copy(lerped);
-      materialRef.current.emissiveIntensity = 0.12 + 0.55 * t;
+    // Update GLSL Shader Uniforms for Dynamic Wall Glow
+    if (shaderMaterialRef.current) {
+      shaderMaterialRef.current.uniforms.uTemperature.value = T;
+      shaderMaterialRef.current.uniforms.uCutaway.value = cutawayEnabled ? 1.0 : 0.0;
     }
+
     if (glowRef.current) {
-      glowRef.current.color.copy(lerped);
       glowRef.current.intensity = 1 + 3 * t;
     }
     if (agitatorRef.current) {
@@ -115,7 +173,6 @@ export function ReactorMesh({
     particleGeometry.attributes.position.needsUpdate = true;
 
     if (particleMaterialRef.current) {
-      particleMaterialRef.current.color.copy(lerped);
       particleMaterialRef.current.size = 0.035 + t * 0.03;
       particleMaterialRef.current.opacity = 0.5 + t * 0.4;
     }
@@ -187,19 +244,13 @@ export function ReactorMesh({
         );
       })}
 
+      {/* Main Reactor Cylinder using Thermal Wall GLSL Shader */}
       <mesh position={[0, 0, 0]} castShadow>
         <cylinderGeometry args={[VESSEL_RADIUS, VESSEL_RADIUS, VESSEL_HEIGHT, 48, 1, false]} />
-        <meshPhysicalMaterial
-          ref={materialRef}
-          color={GLASS_BASE_COLOR}
-          roughness={0.06}
-          metalness={0.05}
-          clearcoat={1}
-          clearcoatRoughness={0.05}
-          transparent
-          opacity={0.55}
-          clippingPlanes={clippingPlanes}
-          side={THREE.DoubleSide}
+        <primitive
+          object={customShaderMat}
+          ref={shaderMaterialRef}
+          attach="material"
         />
       </mesh>
 
@@ -284,11 +335,7 @@ export function ReactorMesh({
         />
       </points>
 
-      {/* Agitator: shaft + a proper hub-and-blade turbine near the
-          bottom. Each blade radiates outward from a central hub (rather
-          than straddling the shaft) and carries a consistent pitch angle,
-          so the three blades read as one coordinated impeller instead of
-          scattered debris. */}
+      {/* Agitator Assembly */}
       <group ref={agitatorRef} position={[0, VESSEL_HEIGHT / 2, 0]}>
         <mesh>
           <cylinderGeometry args={[0.05, 0.05, VESSEL_HEIGHT * 1.05, 12]} />
@@ -296,7 +343,6 @@ export function ReactorMesh({
         </mesh>
 
         <group position={[0, -VESSEL_HEIGHT * 0.78, 0]}>
-          {/* central hub the blades physically connect to */}
           <mesh>
             <cylinderGeometry args={[0.1, 0.1, 0.14, 16]} />
             <meshStandardMaterial color={0xb0b4ba} metalness={0.8} roughness={0.2} />
@@ -304,14 +350,10 @@ export function ReactorMesh({
 
           {[0, 1, 2].map((i) => (
             <group key={i} rotation={[0, (i / 3) * Math.PI * 2, 0]}>
-              {/* short connector arm from hub to blade root */}
               <mesh position={[VESSEL_RADIUS * 0.13, 0, 0]}>
                 <boxGeometry args={[VESSEL_RADIUS * 0.16, 0.06, 0.08]} />
                 <meshStandardMaterial color={0xb0b4ba} metalness={0.8} roughness={0.2} />
               </mesh>
-              {/* blade itself: radiates outward from the hub, with a
-                  consistent pitch (tilt) applied at the blade's own
-                  local origin so it twists like a real turbine blade */}
               <group position={[VESSEL_RADIUS * 0.46, 0, 0]} rotation={[0, 0, THREE.MathUtils.degToRad(28)]}>
                 <mesh>
                   <boxGeometry args={[VESSEL_RADIUS * 0.58, 0.045, 0.26]} />
