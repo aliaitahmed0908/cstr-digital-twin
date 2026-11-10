@@ -27,7 +27,11 @@ const SENSITIVITY_LABELS: Record<SensitivityKey, string> = {
 
 export default function App() {
   const engineRef = useRef<CSTREngine>(new CSTREngine(0.5, 350, defaultParams));
-  const controllerRef = useRef<PIController>(new PIController(2.0, 0.6, 250, 450));
+  
+  // Controllers for Cascade Architecture
+  const masterControllerRef = useRef<PIController>(new PIController(2.0, 0.6, 250, 450));
+  const slaveControllerRef = useRef<PIController>(new PIController(5.0, 0.2, 250, 450));
+  
   const rafRef = useRef<number>(0);
   const lastTimeRef = useRef<number>(performance.now());
   const presetTimeoutsRef = useRef<number[]>([]);
@@ -36,9 +40,12 @@ export default function App() {
   const [recordStats, setRecordStats] = useState({ count: 0, duration: 0 });
   const [tc, setTc] = useState(defaultParams.Tc);
   
-  // PID Tuning State
+  // Control State & IAE Metrics
   const [kp, setKp] = useState(2.0);
   const [tauI, setTauI] = useState(0.6);
+  const [slaveKp, setSlaveKp] = useState(5.0);
+  const [slaveTauI, setSlaveTauI] = useState(0.2);
+  const [iae, setIae] = useState(0);
 
   // Design Parameters (Residence Time V and F)
   const [volume, setVolume] = useState(defaultParams.V);
@@ -52,6 +59,7 @@ export default function App() {
   const [cafFault, setCafFault] = useState(false);
 
   const [autoMode, setAutoMode] = useState(false);
+  const [cascadeMode, setCascadeMode] = useState(false);
   const [setpoint, setSetpoint] = useState(330);
   const [activePreset, setActivePreset] = useState<PresetKey | null>(null);
   const [cutawayOn, setCutawayOn] = useState(false);
@@ -64,27 +72,48 @@ export default function App() {
   const liveTempRef = useRef(350);
   const liveCaRef = useRef(0.5);
   const liveCbRef = useRef(0);
+  const jacketTcRef = useRef(300);
+  const iaeRef = useRef(0);
+  
   const energyTermsRef = useRef<EnergyTerms>({ feed: 0, mainRxn: 0, sideRxn: 0, cooling: 0 });
   const ratesRef = useRef<ReactionRates>({ rate1: 0, rate2: 0 });
+  
   const autoModeRef = useRef(autoMode);
+  const cascadeModeRef = useRef(cascadeMode);
   const setpointRef = useRef(setpoint);
 
   useEffect(() => {
     autoModeRef.current = autoMode;
-    if (autoMode) controllerRef.current.reset();
+    if (autoMode) {
+      masterControllerRef.current.reset();
+      slaveControllerRef.current.reset();
+    }
   }, [autoMode]);
+
+  useEffect(() => {
+    cascadeModeRef.current = cascadeMode;
+    if (cascadeMode) slaveControllerRef.current.reset();
+  }, [cascadeMode]);
 
   useEffect(() => {
     setpointRef.current = setpoint;
   }, [setpoint]);
 
   useEffect(() => {
-    controllerRef.current.setTunings(kp, tauI);
+    masterControllerRef.current.setTunings(kp, tauI);
   }, [kp, tauI]);
 
   useEffect(() => {
+    slaveControllerRef.current.setTunings(slaveKp, slaveTauI);
+  }, [slaveKp, slaveTauI]);
+
+  const resetIae = () => {
+    iaeRef.current = 0;
+    setIae(0);
+  };
+
+  useEffect(() => {
     const engine = engineRef.current;
-    const controller = controllerRef.current;
 
     if (engine.getHistory().length === 0) {
       engine.resetState(0.5, 350); 
@@ -94,13 +123,33 @@ export default function App() {
       const dtSeconds = Math.min((now - lastTimeRef.current) / 1000, 0.1);
       lastTimeRef.current = now;
       const simMinutesPerSecond = 0.5;
+      const dtMinutes = dtSeconds * simMinutesPerSecond;
 
       if (autoModeRef.current && !engine.isEsdTripped()) {
-        const dtMinutes = dtSeconds * simMinutesPerSecond;
         const { T } = engine.getState();
-        const newTc = controller.compute(setpointRef.current, T, dtMinutes);
-        engine.setTc(newTc);
-        setTc(newTc);
+        
+        // 1. Master PI Controller (Calculates jacket setpoint based on reactor T)
+        const masterOutputTcSp = masterControllerRef.current.compute(setpointRef.current, T, dtMinutes);
+        
+        let commandedTc = masterOutputTcSp;
+        
+        // 2. Slave PI Controller (Calculates cooling valve duty based on jacket Tc tracking)
+        if (cascadeModeRef.current) {
+          commandedTc = slaveControllerRef.current.compute(masterOutputTcSp, jacketTcRef.current, dtMinutes);
+        }
+        
+        // 3. Simulated Jacket Thermal Lag (First-Order Response)
+        const jacketTau = 0.15; // minutes
+        jacketTcRef.current += (commandedTc - jacketTcRef.current) * (dtMinutes / jacketTau);
+        
+        engine.setTc(jacketTcRef.current);
+        setTc(jacketTcRef.current);
+        
+        // 4. Update Performance Metrics
+        iaeRef.current += Math.abs(setpointRef.current - T) * dtMinutes;
+        setIae(iaeRef.current);
+      } else {
+        jacketTcRef.current = engine.getState().T; // Follow reactor when manual/off to prevent integral windup shocks
       }
 
       engine.advanceRealTime(dtSeconds, simMinutesPerSecond, 20);
@@ -140,6 +189,7 @@ export default function App() {
   const handleTcChange = (value: number) => {
     setTc(value);
     engineRef.current.setTc(value);
+    jacketTcRef.current = value;
   };
 
   const handleVolumeChange = (v: number) => {
@@ -204,8 +254,10 @@ export default function App() {
     engineRef.current.resetState(0.5, 350);
     engineRef.current.setTc(300);
     setTc(300);
+    jacketTcRef.current = 300;
     setFaulted(false);
     setEsdActive(false);
+    resetIae();
   };
 
   const handleAcknowledgeEsd = () => {
@@ -214,6 +266,7 @@ export default function App() {
       setAutoMode(false);
       engineRef.current.setTc(300);
       setTc(300);
+      jacketTcRef.current = 300;
       setEsdActive(false);
     }
   };
@@ -249,10 +302,10 @@ export default function App() {
       stopPreset();
       return;
     }
-
     clearPresetTimeouts();
     setActivePreset(key);
     setFaulted(false);
+    resetIae();
 
     if (key === "cold") {
       setAutoMode(false);
@@ -269,6 +322,7 @@ export default function App() {
       engineRef.current.resetState(1.0, 300);
       engineRef.current.setTc(300);
       setTc(300);
+      jacketTcRef.current = 300;
     }
 
     if (key === "runaway") {
@@ -286,6 +340,7 @@ export default function App() {
       engineRef.current.resetState(0.5, 350);
       engineRef.current.setTc(420);
       setTc(420);
+      jacketTcRef.current = 420;
     }
 
     if (key === "rejection") {
@@ -361,6 +416,42 @@ export default function App() {
     URL.revokeObjectURL(url);
   };
 
+  const handleExportMarkdownReport = () => {
+    const conversion = (1 - telemetry.Ca / defaultParams.Caf) * 100;
+    const reportStr = `
+# CSTR Digital Twin - Engineering Report
+*Generated via React Process Simulation*
+
+## 1. Physical Design & Kinetic Parameters
+*   **Reactor Volume (V):** ${volume.toFixed(1)} L
+*   **Feed Flow Rate (F):** ${flowRate.toFixed(1)} L/min
+*   **Residence Time (tau):** ${(volume / flowRate).toFixed(2)} min
+*   **Heat Transfer Coeff (UA):** ${defaultParams.UA.toExponential(2)} J/min·K
+
+## 2. Advanced Process Control (APC) Configuration
+*   **Control Strategy:** ${autoMode ? (cascadeMode ? "Cascade (Master-Slave PI)" : "Standard Single-Loop PI") : "Manual Open-Loop"}
+*   **Target Setpoint (T):** ${setpoint.toFixed(1)} K
+*   **Master PI Tuning:** Kp = ${kp.toFixed(2)}, tau_i = ${tauI.toFixed(2)} min
+${cascadeMode ? `*   **Slave PI Tuning:** Kp = ${slaveKp.toFixed(2)}, tau_i = ${slaveTauI.toFixed(2)} min` : ""}
+
+## 3. Real-Time Telemetry & Disturbance State
+*   **Operating Point:** C_A = ${telemetry.Ca.toFixed(3)} mol/L, T = ${telemetry.T.toFixed(1)} K
+*   **Coolant Jacket Temp (Tc):** ${tc.toFixed(1)} K
+*   **Reaction Conversion:** ${conversion.toFixed(1)}%
+*   **Integral Absolute Error (IAE):** ${iae.toFixed(2)}
+*   **Active Disturbances:** ${tfDisturbance ? "Feed Temp (+40K)" : "None"} | ${flowDisturbance ? "Feed Flow Surge" : "None"}
+
+## 4. Phase Space & Stability Notes
+*This section allows for theoretical inclusion of bifurcation nullcline figures tracking dCa/dt = 0 and dT/dt = 0 intersections.*
+    `.trim();
+
+    const blob = new Blob([reportStr], { type: "text/markdown;charset=utf-8;" });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = `CSTR_Technical_Appendix_${new Date().getTime()}.md`;
+    link.click();
+  };
+
   const anyDisturbanceActive = tfDisturbance || flowDisturbance || uaFault || agitatorFault || cafFault;
 
   const thermalState =
@@ -421,7 +512,7 @@ export default function App() {
           {autoMode && !esdActive && !faulted && (
             <div style={{ display: "flex", alignItems: "center", fontSize: 11.5, color: "#a78bfa" }}>
               <span className="status-dot" style={{ background: "#a78bfa" }} />
-              AUTO CONTROL
+              {cascadeMode ? "CASCADE APC" : "AUTO CONTROL"}
             </div>
           )}
           {sensitivityKey && (
@@ -567,19 +658,14 @@ export default function App() {
           </Card>
 
           <Card>
-            <SectionLabel>Data Logging &amp; Export</SectionLabel>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
-              <div>
-                <div style={{ fontSize: 12.5, fontWeight: 600, color: "#eef1f6" }}>Telemetry Buffer</div>
-                <div className="mono" style={{ fontSize: 10.5, color: "#5b6577", marginTop: 2 }}>
-                  {recordStats.count} samples · {recordStats.duration.toFixed(2)} min
-                </div>
-              </div>
+            <SectionLabel>Data Logging &amp; Report Export</SectionLabel>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 10 }}>
               <button
                 onClick={handleExportCSV}
                 disabled={recordStats.count === 0}
                 style={{
-                  padding: "6px 14px",
+                  flex: 1,
+                  padding: "8px 12px",
                   borderRadius: 6,
                   border: recordStats.count > 0 ? "1px solid #3ba8ff" : "1px solid #1f2733",
                   background: recordStats.count > 0 ? "rgba(59, 168, 255, 0.1)" : "transparent",
@@ -590,16 +676,36 @@ export default function App() {
                   transition: "all 0.2s"
                 }}
               >
-                Export CSV
+                Export CSV Telemetry
+              </button>
+              <button
+                onClick={handleExportMarkdownReport}
+                style={{
+                  flex: 1,
+                  padding: "8px 12px",
+                  borderRadius: 6,
+                  border: "1px solid #a78bfa",
+                  background: "rgba(167, 139, 250, 0.1)",
+                  color: "#a78bfa",
+                  fontSize: 11.5,
+                  fontWeight: 600,
+                  cursor: "pointer",
+                  transition: "all 0.2s"
+                }}
+              >
+                Download .MD Report
               </button>
             </div>
             <div style={{ fontSize: 10.5, color: "#5b6577", lineHeight: 1.4 }}>
-              Logs physical process state at every RK4 integration step. Resetting the reactor starts a new log file.
+              Markdown report generated is formatted for direct Overleaf/LaTeX coursework insertion.
             </div>
           </Card>
 
           <Card>
-            <SectionLabel>Live Telemetry</SectionLabel>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+              <div style={{ fontSize: 11, letterSpacing: 0.6, textTransform: "uppercase", color: "#5b6577", fontWeight: 600 }}>Live Telemetry</div>
+              <button onClick={resetIae} style={{ fontSize: 10, padding: "2px 6px", background: "#1f2733", border: "none", color: "#a78bfa", borderRadius: 4, cursor: "pointer" }}>Reset IAE</button>
+            </div>
             <Metric label="Concentration, Ca" value={`${telemetry.Ca.toFixed(4)} mol/L`} mono />
             <Metric label="Concentration, Cb" value={`${telemetry.Cb.toFixed(4)} mol/L`} mono />
             <Metric label="Reactor Temperature, T" value={`${telemetry.T.toFixed(2)} K`} mono />
@@ -612,7 +718,8 @@ export default function App() {
             />
             <Metric label="Sim Time" value={`${telemetry.simTime.toFixed(1)} min`} mono />
             <div style={{ height: 1, background: "#1f2733", margin: "10px 0" }} />
-            <Metric label="Thermal State" value={thermalState} valueColor={stateColor} />
+            <Metric label="Simulated Jacket Lag Tc" value={`${tc.toFixed(1)} K`} mono valueColor="#3ba8ff" />
+            <Metric label="Integral Abs. Error (IAE)" value={iae.toFixed(2)} mono valueColor="#a78bfa" />
           </Card>
 
           <Card>
@@ -851,26 +958,36 @@ export default function App() {
 
             {autoMode && (
               <div style={{ marginTop: 14 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 8 }}>
-                  <span style={{ fontSize: 12.5, color: "#8a94a6" }}>Setpoint T</span>
-                  <span className="mono" style={{ fontSize: 18, fontWeight: 700, color: "#a78bfa" }}>
-                    {setpoint.toFixed(1)} K
-                  </span>
-                </div>
-                <input
-                  type="range"
-                  className="thermo-slider"
-                  min={280}
-                  max={420}
-                  step={0.5}
-                  value={setpoint}
-                  disabled={controlsLocked}
-                  onChange={(e) => setSetpoint(parseFloat(e.target.value))}
+                <ToggleRow
+                  label="Cascade Architecture"
+                  detail={cascadeMode ? "Slave loop tracks Jacket Tc" : "Single primary loop"}
+                  checked={cascadeMode}
+                  onChange={() => setCascadeMode((v) => !v)}
+                  accentColor="#3ba8ff"
                 />
+
+                <div style={{ marginTop: 14 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 8 }}>
+                    <span style={{ fontSize: 12.5, color: "#8a94a6" }}>Setpoint T</span>
+                    <span className="mono" style={{ fontSize: 18, fontWeight: 700, color: "#a78bfa" }}>
+                      {setpoint.toFixed(1)} K
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    className="thermo-slider"
+                    min={280}
+                    max={420}
+                    step={0.5}
+                    value={setpoint}
+                    disabled={controlsLocked}
+                    onChange={(e) => setSetpoint(parseFloat(e.target.value))}
+                  />
+                </div>
 
                 <div style={{ marginTop: 14, paddingTop: 12, borderTop: "1px dashed #1f2733" }}>
                   <div style={{ fontSize: 11, letterSpacing: 0.5, textTransform: "uppercase", color: "#a78bfa", marginBottom: 8, fontWeight: 600 }}>
-                    PID Tuning Sandbox
+                    Master PI (Reactor T)
                   </div>
                   
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 4 }}>
@@ -905,6 +1022,22 @@ export default function App() {
                     onChange={(e) => setTauI(parseFloat(e.target.value))}
                   />
                 </div>
+
+                {cascadeMode && (
+                  <div style={{ marginTop: 14, paddingTop: 12, borderTop: "1px dashed #1f2733", background: "rgba(59, 168, 255, 0.05)", padding: "10px", borderRadius: 8 }}>
+                    <div style={{ fontSize: 11, color: "#3ba8ff", marginBottom: 8, fontWeight: 600 }}>Slave PI (Jacket Tc)</div>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 4 }}>
+                      <span style={{ fontSize: 12, color: "#8a94a6" }}>Slave Prop. Gain (Kp)</span>
+                      <span className="mono" style={{ fontSize: 14, fontWeight: 700, color: "#3ba8ff" }}>{slaveKp.toFixed(2)}</span>
+                    </div>
+                    <input type="range" className="thermo-slider" min={0.1} max={10.0} step={0.1} value={slaveKp} onChange={(e) => setSlaveKp(parseFloat(e.target.value))} />
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginTop: 10, marginBottom: 4 }}>
+                      <span style={{ fontSize: 12, color: "#8a94a6" }}>Slave Int. Time (tau_i)</span>
+                      <span className="mono" style={{ fontSize: 14, fontWeight: 700, color: "#3ba8ff" }}>{slaveTauI.toFixed(2)} min</span>
+                    </div>
+                    <input type="range" className="thermo-slider" min={0.05} max={1.0} step={0.05} value={slaveTauI} onChange={(e) => setSlaveTauI(parseFloat(e.target.value))} />
+                  </div>
+                )}
               </div>
             )}
 
@@ -912,7 +1045,7 @@ export default function App() {
 
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 10 }}>
               <span style={{ fontSize: 12.5, color: "#8a94a6" }}>
-                {autoMode ? "Tc (controller output)" : "Setpoint Tc"}
+                {autoMode ? (cascadeMode ? "Commanded Jacket Tc" : "Tc (controller output)") : "Setpoint Tc"}
               </span>
               <span className="mono" style={{ fontSize: 20, fontWeight: 700 }}>
                 {tc.toFixed(1)} K

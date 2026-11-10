@@ -94,6 +94,7 @@ export class CSTREngine {
   
   private time = 0;
   private Tc = 300.0;
+  private actualTc = 300.0; // For cascade inner loop lagging
   
   private esdLatched = false;
   private faulted = false;
@@ -108,6 +109,7 @@ export class CSTREngine {
     this.params = { ...initialParams };
     this.baseParams = { ...initialParams };
     this.Tc = this.params.Tc;
+    this.actualTc = this.params.Tc;
     this.resetState(Ca0, T0);
   }
 
@@ -140,14 +142,14 @@ export class CSTREngine {
     
     const uaMultiplier = (this.uaFailed ? 0.02 : 1.0) * (this.agitatorTripped ? 0.15 : 1.0);
     const effectiveUA = this.params.UA * uaMultiplier;
-    const Qcool = effectiveUA * (T - this.Tc);
+    const Qcool = effectiveUA * (T - this.actualTc);
 
     this.history.push({
       time_min: this.time,
       temperature_K: T,
       CA_mol_per_L: Ca,
       CB_mol_per_L: Cb,
-      coolant_temperature_K: this.Tc,
+      coolant_temperature_K: this.actualTc,
       Qcool_J_per_min: Qcool,
       conversion_pct: conversion,
       selectivity_B_pct: selectivity,
@@ -159,6 +161,10 @@ export class CSTREngine {
     if (!this.esdLatched) {
       this.Tc = newTc;
     }
+  }
+
+  public getActualTc(): number {
+    return this.actualTc;
   }
 
   public setDisturbance(type: "Tf" | "F", active: boolean): void {
@@ -223,7 +229,7 @@ export class CSTREngine {
     return false;
   }
 
-  private getDerivatives(Ca: number, Cb: number, T: number) {
+  private getDerivatives(Ca: number, Cb: number, T: number, currentTc: number) {
     const { F, V, Tf, rho, Cp, R, k0, Ea, dHr, k02, Ea2, dHr2, UA } = this.params;
     const Caf = this.cafSpikeActive ? this.baseParams.Caf * 2.5 : this.params.Caf;
     
@@ -243,7 +249,7 @@ export class CSTREngine {
     const feed = (F / V) * (Tf - T);
     const mainRxn = (Math.abs(dHr) / rhoCp) * rate1;
     const sideRxn = (Math.abs(dHr2) / rhoCp) * rate2;
-    const cooling = (effectiveUA / (rhoCp * V)) * (this.Tc - T);
+    const cooling = (effectiveUA / (rhoCp * V)) * (currentTc - T);
     
     const dT = feed + mainRxn + sideRxn + cooling;
     
@@ -252,7 +258,7 @@ export class CSTREngine {
 
   public getEnergyTerms(): EnergyTerms {
     if (this.faulted) return { feed: 0, mainRxn: 0, sideRxn: 0, cooling: 0 };
-    const d = this.getDerivatives(this.state.Ca, this.state.Cb, this.state.T);
+    const d = this.getDerivatives(this.state.Ca, this.state.Cb, this.state.T, this.actualTc);
     return {
       feed: d.feed,
       mainRxn: d.mainRxn,
@@ -263,14 +269,14 @@ export class CSTREngine {
 
   public getRates(): ReactionRates {
     if (this.faulted) return { rate1: 0, rate2: 0 };
-    const d = this.getDerivatives(this.state.Ca, this.state.Cb, this.state.T);
+    const d = this.getDerivatives(this.state.Ca, this.state.Cb, this.state.T, this.actualTc);
     return {
       rate1: d.rate1,
       rate2: d.rate2
     };
   }
 
-  public advanceRealTime(dtSeconds: number, simMinutesPerSecond: number, substeps: number = 20): void {
+  public advanceRealTime(dtSeconds: number, simMinutesPerSecond: number, substeps: number = 20, cascadeActive: boolean = false): void {
     if (this.faulted) return;
     
     const dtSimMinutes = dtSeconds * simMinutesPerSecond;
@@ -279,6 +285,14 @@ export class CSTREngine {
     const dtStep = dtSimMinutes / substeps;
 
     for (let i = 0; i < substeps; i++) {
+      // Inner loop cascade valve lag dynamics: actualTc chases setpoint Tc
+      if (cascadeActive) {
+        const valveLagTimeConstant = 0.05; // Fast inner loop valve response
+        this.actualTc += (this.Tc - this.actualTc) * (dtStep / valveLagTimeConstant);
+      } else {
+        this.actualTc = this.Tc; // Direct coupling
+      }
+
       this.step(dtStep);
       
       if (this.faulted) break;
@@ -290,10 +304,10 @@ export class CSTREngine {
   private step(dt: number) {
     const { Ca, Cb, T } = this.state;
 
-    const k1 = this.getDerivatives(Ca, Cb, T);
-    const k2 = this.getDerivatives(Ca + 0.5 * dt * k1.dCa, Cb + 0.5 * dt * k1.dCb, T + 0.5 * dt * k1.dT);
-    const k3 = this.getDerivatives(Ca + 0.5 * dt * k2.dCa, Cb + 0.5 * dt * k2.dCb, T + 0.5 * dt * k2.dT);
-    const k4 = this.getDerivatives(Ca + dt * k3.dCa, Cb + dt * k3.dCb, T + dt * k3.dT);
+    const k1 = this.getDerivatives(Ca, Cb, T, this.actualTc);
+    const k2 = this.getDerivatives(Ca + 0.5 * dt * k1.dCa, Cb + 0.5 * dt * k1.dCb, T + 0.5 * dt * k1.dT, this.actualTc);
+    const k3 = this.getDerivatives(Ca + 0.5 * dt * k2.dCa, Cb + 0.5 * dt * k2.dCb, T + 0.5 * dt * k2.dT, this.actualTc);
+    const k4 = this.getDerivatives(Ca + dt * k3.dCa, Cb + dt * k3.dCb, T + dt * k3.dT, this.actualTc);
 
     const nextCa = Ca + (dt / 6) * (k1.dCa + 2 * k2.dCa + 2 * k3.dCa + k4.dCa);
     const nextCb = Cb + (dt / 6) * (k1.dCb + 2 * k2.dCb + 2 * k3.dCb + k4.dCb);
@@ -313,6 +327,7 @@ export class CSTREngine {
     }
     if (this.esdLatched) {
       this.Tc = 250.0;
+      this.actualTc = 250.0;
     }
 
     this.time += dt;

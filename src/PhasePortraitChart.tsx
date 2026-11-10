@@ -43,7 +43,7 @@ export function PhasePortraitChart({
       
       ctx.clearRect(0, 0, width, height);
 
-      // Background grid
+      // 1. Background grid
       ctx.strokeStyle = "#1f2733";
       ctx.lineWidth = 1;
       ctx.beginPath();
@@ -78,7 +78,48 @@ export function PhasePortraitChart({
       const rhoCp = rho * Cp;
       const dilution = Math.max(1e-4, F / Math.max(1.0, V));
 
-      // 1. Draw Ca Nullcline (dCa/dt = 0) -> Purple curve
+      // 2. Draw Vector Field (Phase-Plane Trajectories)
+      ctx.strokeStyle = "rgba(138, 148, 166, 0.25)";
+      ctx.lineWidth = 1;
+      const gridSteps = 16;
+      for (let i = 1; i < gridSteps; i++) {
+        for (let j = 1; j < gridSteps; j++) {
+          const ca = caMin + (i / gridSteps) * (caMax - caMin);
+          const t_val = tMin + (j / gridSteps) * (tMax - tMin);
+          
+          const expTerm = Math.exp(-Ea / (R * t_val));
+          if (!Number.isFinite(expTerm)) continue;
+          
+          const k1 = k0 * expTerm;
+          const dCa = dilution * (Caf - ca) - k1 * ca;
+          const heatGen = (Math.abs(dHr) / rhoCp) * k1 * ca;
+          const heatRem = dilution * (t_val - tf) + (UA / (rhoCp * Math.max(1.0, V))) * (t_val - tc);
+          const dT = heatGen - heatRem;
+
+          const dx = dCa * (width / (caMax - caMin));
+          const dy = -dT * (height / (tMax - tMin)); // inverted Y
+
+          const mag = Math.sqrt(dx * dx + dy * dy);
+          if (mag > 0) {
+            const arrowLen = 7;
+            const nx = (dx / mag) * arrowLen;
+            const ny = (dy / mag) * arrowLen;
+            const px = toX(ca);
+            const py = toY(t_val);
+
+            ctx.beginPath();
+            ctx.moveTo(px - nx / 2, py - ny / 2);
+            ctx.lineTo(px + nx / 2, py + ny / 2);
+            const angle = Math.atan2(ny, nx);
+            ctx.lineTo(px + nx / 2 - 2.5 * Math.cos(angle - Math.PI / 6), py + ny / 2 - 2.5 * Math.sin(angle - Math.PI / 6));
+            ctx.moveTo(px + nx / 2, py + ny / 2);
+            ctx.lineTo(px + nx / 2 - 2.5 * Math.cos(angle + Math.PI / 6), py + ny / 2 - 2.5 * Math.sin(angle + Math.PI / 6));
+            ctx.stroke();
+          }
+        }
+      }
+
+      // 3. Draw Ca Nullcline (dCa/dt = 0) -> Purple curve
       ctx.strokeStyle = "#a78bfa";
       ctx.lineWidth = 2;
       ctx.beginPath();
@@ -108,7 +149,7 @@ export function PhasePortraitChart({
       }
       ctx.stroke();
 
-      // 2. Draw T Nullcline (dT/dt = 0) -> Smooth Orange curve via explicit Ca(T) evaluation
+      // 4. Draw T Nullcline (dT/dt = 0) -> Smooth Orange curve
       ctx.strokeStyle = "#ffb545";
       ctx.lineWidth = 2;
       ctx.beginPath();
@@ -140,7 +181,7 @@ export function PhasePortraitChart({
       }
       ctx.stroke();
 
-      // 3. Draw current state operating point dot
+      // 5. Draw current state operating point dot
       if (Number.isFinite(currentCa) && Number.isFinite(currentT)) {
         const dotX = toX(currentCa);
         const dotY = toY(currentT);
@@ -166,8 +207,8 @@ export function PhasePortraitChart({
     <div style={{ position: "relative", width: "100%", height: 180, background: "#06090f", borderRadius: 8, overflow: "hidden", border: "1px solid #1f2733" }}>
       <canvas ref={canvasRef} width={340} height={180} style={{ width: "100%", height: "100%", display: "block" }} />
       <div style={{ position: "absolute", bottom: 6, left: 8, display: "flex", gap: 12, fontSize: 10, color: "#8a94a6" }}>
-        <span style={{ color: "#a78bfa" }}>— $dC_A/dt = 0$</span>
-        <span style={{ color: "#ffb545" }}>— $dT/dt = 0$</span>
+        <span style={{ color: "#a78bfa" }}>— dCa/dt = 0</span>
+        <span style={{ color: "#ffb545" }}>— dT/dt = 0</span>
       </div>
     </div>
   );
