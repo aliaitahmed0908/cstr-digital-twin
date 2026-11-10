@@ -35,8 +35,7 @@ export function PhasePortraitChart({
   const lastSampleTime = useRef(0);
   const rafRef = useRef<number>(0);
 
-  // 1. ISOLATE GETTERS FROM REACT RENDER CYCLE
-  // This stops the main thread from freezing and breaking your UI toggles
+  // ISOLATE GETTERS FROM REACT RENDER CYCLE (Fixes the UI Freeze & Cutaway button)
   const getters = useRef({ getCa, getT, getTc, getTf });
   useEffect(() => {
     getters.current = { getCa, getT, getTc, getTf };
@@ -53,7 +52,7 @@ export function PhasePortraitChart({
     const draw = (now: number) => {
       const { getCa, getT, getTc, getTf } = getters.current;
 
-      // 2. Data Sampling (Ring Buffer)
+      // Data Sampling
       if (now - lastSampleTime.current >= sampleIntervalMs) {
         lastSampleTime.current = now;
         const idx = writeIndex.current % trailLength;
@@ -63,7 +62,7 @@ export function PhasePortraitChart({
         filled.current = Math.min(filled.current + 1, trailLength);
       }
 
-      // 3. High-DPI Canvas Setup
+      // High-DPI Canvas Setup
       const dpr = window.devicePixelRatio || 1;
       const rect = canvas.getBoundingClientRect();
       const w = rect.width || 300;
@@ -76,7 +75,7 @@ export function PhasePortraitChart({
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.clearRect(0, 0, w, h);
 
-      // 4. Layout Padding
+      // Layout Padding
       const padding = { top: 20, right: 15, bottom: 30, left: 45 };
       const plotW = w - padding.left - padding.right;
       const plotH = h - padding.top - padding.bottom;
@@ -89,17 +88,16 @@ export function PhasePortraitChart({
       ctx.fillStyle = "#0a0d13";
       ctx.fillRect(0, 0, w, h);
 
-      // 5. CLIPPING MASK FOR DATA CURVES
+      // CLIPPING MASK FOR DATA CURVES (Prevents infinite math from breaking canvas)
       ctx.save();
       ctx.beginPath();
       ctx.rect(padding.left, padding.top, plotW, plotH);
       ctx.clip();
 
-      // --- 6. THEORETICAL NULLCLINES ---
+      // THEORETICAL NULLCLINES
       const currentTc = getTc ? getTc() : 300;
       const currentTf = getTf ? getTf() : ((defaultParams as any).Tf ?? 350);
       
-      // Robust parameter fallbacks in case of missing simulation exports
       const F = (defaultParams as any).F ?? 100;
       const V = (defaultParams as any).V ?? 100;
       const Caf = (defaultParams as any).Caf ?? 1.0;
@@ -155,7 +153,7 @@ export function PhasePortraitChart({
       ctx.stroke();
       ctx.setLineDash([]);
       
-      // --- 7. LIVE TRAJECTORY TRAIL ---
+      // LIVE TRAJECTORY TRAIL
       const count = filled.current;
       if (count > 1) {
         const startIdx = writeIndex.current - count;
@@ -191,9 +189,9 @@ export function PhasePortraitChart({
         ctx.fill();
       }
 
-      ctx.restore(); // Remove clipping mask so axes can draw outside the plot area
+      ctx.restore(); // Remove clipping mask
 
-      // 8. Grid Lines & Axes Overlays
+      // Grid Lines & Axes Overlays
       ctx.strokeStyle = "#1f2733";
       ctx.lineWidth = 1;
       ctx.fillStyle = "#5b6577";
@@ -245,7 +243,7 @@ export function PhasePortraitChart({
 
     rafRef.current = requestAnimationFrame(draw);
     return () => cancelAnimationFrame(rafRef.current);
-  }, [caMin, caMax, tMin, tMax, tripTemp, trailLength]); // Removed getters from dependency array
+  }, [caMin, caMax, tMin, tMax, tripTemp, trailLength]);
 
   return (
     <div style={{ width: "100%" }}>

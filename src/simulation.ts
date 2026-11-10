@@ -1,430 +1,302 @@
-// simulation.ts
-export interface CSTRParams {
-  F: number;
-  V: number;
-  Caf: number;
-  Tf: number;
-  k0: number;
-  Ea: number;
-  R: number;
-  dHr: number;
-  rho: number;
-  Cp: number;
-  UA: number;
-  Tc: number;
-  // Consecutive side reaction B -> C. Given a higher activation energy than
-  // the main reaction so it's negligible at normal operating temperature
-  // but switches on above ~420-440 K, consuming desired product B and
-  // forming an undesired byproduct C. Tuned so its peak heat release stays
-  // well below the main reaction's, so it perturbs selectivity without
-  // overwhelming the fixed-step RK4 integrator during a runaway.
-  k0b: number;
-  Eab: number;
-  dHrb: number;
-}
-
-export const defaultParams: CSTRParams = {
-  F: 100,
-  V: 100,
-  Caf: 1.0,
-  Tf: 350,
-  k0: 7.2e10,
-  Ea: 8.314 * 8750,
-  R: 8.314,
-  dHr: -5.0e4,
-  rho: 1000,
-  Cp: 0.239,
-  UA: 5.0e4,
-  Tc: 300,
-  k0b: 6.159e20,
-  Eab: 8.314 * 21514.7,
-  dHrb: -2.0e4,
-};
-
-// Parameters exposed for the sensitivity "what-if" panel. Kept to a
-// deliberately small, physically meaningful set (activation energy,
-// pre-exponential factor, heat transfer coefficient, heat of reaction) so
-// a user can explore realistic scenarios like catalyst deactivation (k0
-// down), fouling (UA down), or a miscalibrated heat of reaction.
-export const SENSITIVITY_KEYS = ["Ea", "k0", "UA", "dHr"] as const;
-export type SensitivityKey = (typeof SENSITIVITY_KEYS)[number];
-
-// State vector: [Ca, Cb, T]
-const STATE_LEN = 3;
-
-type DisturbanceKind = "Tf" | "F";
+export type SensitivityKey = "Ea" | "k0" | "UA" | "dHr";
+export const SENSITIVITY_KEYS: SensitivityKey[] = ["Ea", "k0", "UA", "dHr"];
 
 export interface EnergyTerms {
-  feed: number; // F/V * (Tf - T): sensible heat carried in/out by flow
-  mainRxn: number; // heat released by the main A -> B reaction
-  sideRxn: number; // heat released by the B -> C side reaction
-  cooling: number; // heat removed by the jacket (negative when removing heat)
+  feed: number;
+  mainRxn: number;
+  sideRxn: number;
+  cooling: number;
 }
 
 export interface ReactionRates {
-  rate1: number; // A -> B, mol/(L*min)
-  rate2: number; // B -> C, mol/(L*min)
+  rate1: number;
+  rate2: number;
 }
 
-// ESD (Emergency Shutdown) interlock thresholds. Independent of the PI
-// controller and the manual Tc slider — this models a Safety Instrumented
-// System that overrides normal control the moment temperature crosses a
-// hard limit. This is a LATCHING interlock, matching real SIS design: it
-// does not auto-release the instant temperature dips back under the reset
-// threshold, because doing so (with the underlying unsafe setpoint still
-// in effect) just produces a trip/release/re-trip limit cycle. Instead the
-// operator must explicitly acknowledge, and only once T has genuinely
-// fallen below the reset threshold.
-const ESD_TRIP_TEMP = 440;
-const ESD_RESET_TEMP = 415;
+// 1. FULL-RUN TELEMETRY INTERFACE
+export interface TelemetryRecord {
+  time_min: number;
+  temperature_K: number;
+  CA_mol_per_L: number;
+  CB_mol_per_L: number;
+  coolant_temperature_K: number;
+  Qcool_J_per_min: number;
+  conversion_pct: number;
+  selectivity_B_pct: number;
+  esd_latched: boolean;
+}
 
-// Hard physical bounds used as a last-resort safety net. If a step ever
-// produces a non-finite value (from parameter tuning mistakes, extreme
-// disturbances, etc.) we freeze the state at its last valid value instead
-// of letting NaN/Infinity propagate into the UI and the 3D render.
-const T_HARD_MAX = 700;
-const T_HARD_MIN = 200;
+export const defaultParams = {
+  F: 100.0,       // Feed flow rate (L/min)
+  V: 100.0,       // Reactor volume (L)
+  Caf: 1.0,       // Feed concentration of A (mol/L)
+  Tf: 350.0,      // Feed temperature (K)
+  Tc: 300.0,      // Default coolant temperature (K)
+  UA: 50000.0,    // Heat transfer coefficient (J/(min*K))
+  rho: 1000.0,    // Density (g/L)
+  Cp: 4.18,       // Heat capacity (J/(g*K))
+  R: 8.314,       // Gas constant (J/(mol*K))
+  
+  // Main Reaction A -> B (Desired)
+  k0: 7.2e10,     // Pre-exponential factor (1/min)
+  Ea: 72750.0,    // Activation energy (J/mol)
+  dHr: -50000.0,  // Heat of reaction (J/mol)
+  
+  // Side Reaction B -> C (Undesired extension)
+  k02: 2.0e10,    // Pre-exponential factor (1/min)
+  Ea2: 80000.0,   // Activation energy (J/mol)
+  dHr2: -30000.0, // Heat of reaction (J/mol)
+};
+
+export class PIController {
+  private Kp: number;
+  private Ki: number;
+  private outMin: number;
+  private outMax: number;
+  private integral: number = 0;
+
+  constructor(Kp: number, Ki: number, outMin: number, outMax: number) {
+    this.Kp = Kp;
+    this.Ki = Ki;
+    this.outMin = outMin;
+    this.outMax = outMax;
+  }
+
+  public reset(): void {
+    this.integral = 0;
+  }
+
+  public compute(setpoint: number, pv: number, dt: number): number {
+    const error = setpoint - pv;
+    const pTerm = this.Kp * error;
+    
+    // Direction-aware anti-windup
+    let tentativeOut = pTerm + this.Ki * (this.integral + error * dt);
+    if (tentativeOut > this.outMax) {
+      if (error < 0) this.integral += error * dt;
+    } else if (tentativeOut < this.outMin) {
+      if (error > 0) this.integral += error * dt;
+    } else {
+      this.integral += error * dt;
+    }
+
+    const out = pTerm + this.Ki * this.integral;
+    return Math.max(this.outMin, Math.min(this.outMax, out));
+  }
+}
 
 export class CSTREngine {
-  params: CSTRParams;
-  private state: Float64Array;
-  private k1: Float64Array;
-  private k2: Float64Array;
-  private k3: Float64Array;
-  private k4: Float64Array;
-  private tmp: Float64Array;
-  private deriv: Float64Array;
-  private simTime = 0;
-
-  private tfDisturbanceOn = false;
-  private flowDisturbanceOn = false;
-  private tfMagnitude = 40;
-  private flowMagnitude = 40;
-
+  private params = { ...defaultParams };
+  private baseParams = { ...defaultParams };
+  private state = { Ca: 0.5, Cb: 0.0, T: 350.0 };
+  
+  private time = 0;
+  private Tc = 300.0;
+  
   private esdLatched = false;
   private faulted = false;
+  
+  // 2. FULL-RUN HISTORY BUFFER
+  private history: TelemetryRecord[] = [];
 
-  private diagFeed = 0;
-  private diagMainHeat = 0;
-  private diagSideHeat = 0;
-  private diagCooling = 0;
-  private diagRate1 = 0;
-  private diagRate2 = 0;
-
-  constructor(initialCa = 0.5, initialT = 350, params: CSTRParams = defaultParams) {
-    this.params = { ...params };
-    this.state = new Float64Array(STATE_LEN);
-    this.k1 = new Float64Array(STATE_LEN);
-    this.k2 = new Float64Array(STATE_LEN);
-    this.k3 = new Float64Array(STATE_LEN);
-    this.k4 = new Float64Array(STATE_LEN);
-    this.tmp = new Float64Array(STATE_LEN);
-    this.deriv = new Float64Array(STATE_LEN);
-    this.state[0] = initialCa;
-    this.state[1] = 0; // Cb starts at zero, no product B in the initial fill
-    this.state[2] = initialT;
-    this.computeDiagnostics();
+  constructor(Ca0: number, T0: number, initialParams = defaultParams) {
+    this.params = { ...initialParams };
+    this.baseParams = { ...initialParams };
+    this.Tc = this.params.Tc;
+    this.resetState(Ca0, T0);
   }
 
-  setTc(tc: number): void {
-    this.params.Tc = Math.max(250, Math.min(450, tc));
+  public resetState(Ca0: number, T0: number): void {
+    this.state = { Ca: Ca0, Cb: 0.0, T: T0 };
+    this.time = 0;
+    this.esdLatched = false;
+    this.faulted = false;
+    this.history = [];
+    
+    // Log the exact t=0 initial state immediately
+    this.recordHistoryStep();
   }
 
-  getTc(): number {
-    return this.params.Tc;
+  public getHistory(): TelemetryRecord[] {
+    return this.history;
   }
 
-  getTime(): number {
-    return this.simTime;
+  // 3. TELEMETRY RECORDER LOGIC
+  private recordHistoryStep(): void {
+    if (this.faulted) return; // Do not log NaN/Inf during numerical blowups
+
+    const { Ca, Cb, T } = this.state;
+    const Caf = this.params.Caf;
+    
+    const conversion = (1 - Ca / Caf) * 100;
+    const totalConverted = Caf - Ca;
+    const selectivity = totalConverted > 1e-6 ? (Cb / totalConverted) * 100 : 100;
+    
+    // Qcool = UA * (T - Tc). Physical convention: positive value means heat LEAVES the reactor.
+    // We use the live applied Tc, which correctly reflects any forced 250K ESD overrides.
+    const Qcool = this.params.UA * (T - this.Tc);
+
+    this.history.push({
+      time_min: this.time,
+      temperature_K: T,
+      CA_mol_per_L: Ca,
+      CB_mol_per_L: Cb,
+      coolant_temperature_K: this.Tc,
+      Qcool_J_per_min: Qcool,
+      conversion_pct: conversion,
+      selectivity_B_pct: selectivity,
+      esd_latched: this.esdLatched
+    });
   }
 
-  getState(): { Ca: number; Cb: number; T: number } {
-    return { Ca: this.state[0], Cb: this.state[1], T: this.state[2] };
-  }
-
-  /** Live breakdown of the four heat terms driving dT/dt, in K/min. Powers
-   *  the energy balance chart so users can see *why* temperature is moving,
-   *  not just that it is. */
-  getEnergyTerms(): EnergyTerms {
-    return {
-      feed: this.diagFeed,
-      mainRxn: this.diagMainHeat,
-      sideRxn: this.diagSideHeat,
-      cooling: this.diagCooling,
-    };
-  }
-
-  /** Live reaction rates for the A -> B -> C pathway diagram. */
-  getRates(): ReactionRates {
-    return { rate1: this.diagRate1, rate2: this.diagRate2 };
-  }
-
-  /** Sets a kinetic/thermal parameter for the sensitivity "what-if" panel.
-   *  Only the keys in SENSITIVITY_KEYS are intended to be touched this way;
-   *  everything else (F, Tf, Tc, ...) has its own dedicated control path. */
-  setSensitivityParam(key: SensitivityKey, value: number): void {
-    this.params[key] = value;
-  }
-
-  getSensitivityParam(key: SensitivityKey): number {
-    return this.params[key];
-  }
-
-  /** Resets every sensitivity-adjustable parameter back to its nominal
-   *  default, so switching which parameter you're exploring (or hitting
-   *  reset) never leaves a stale override applied on a different one. */
-  resetSensitivityParams(): void {
-    for (const key of SENSITIVITY_KEYS) {
-      this.params[key] = defaultParams[key];
+  public setTc(newTc: number): void {
+    if (!this.esdLatched) {
+      this.Tc = newTc;
     }
   }
 
-  resetState(Ca: number, T: number): void {
-    this.state[0] = Ca;
-    this.state[1] = 0;
-    this.state[2] = T;
-    this.simTime = 0;
-    this.esdLatched = false;
-    this.faulted = false;
-    this.computeDiagnostics();
+  public setDisturbance(type: "Tf" | "F", active: boolean): void {
+    if (type === "Tf") {
+      this.params.Tf = active ? this.baseParams.Tf + 40.0 : this.baseParams.Tf;
+    } else if (type === "F") {
+      this.params.F = active ? this.baseParams.F + 40.0 : this.baseParams.F;
+    }
   }
 
-  setDisturbance(kind: DisturbanceKind, active: boolean): void {
-    if (kind === "Tf") this.tfDisturbanceOn = active;
-    else this.flowDisturbanceOn = active;
+  public resetSensitivityParams(): void {
+    SENSITIVITY_KEYS.forEach((key) => {
+      this.params[key] = this.baseParams[key];
+    });
   }
 
-  isDisturbanceOn(kind: DisturbanceKind): boolean {
-    return kind === "Tf" ? this.tfDisturbanceOn : this.flowDisturbanceOn;
+  public setSensitivityParam(key: SensitivityKey, value: number): void {
+    this.params[key] = value;
   }
 
-  isAnyDisturbanceActive(): boolean {
-    return this.tfDisturbanceOn || this.flowDisturbanceOn;
+  public getState() {
+    return { ...this.state };
   }
 
-  /** True while the ESD interlock is latched and overriding Tc. Stays true
-   *  even after temperature drops back under the reset threshold — it only
-   *  clears via an explicit acknowledgeEsd() call. */
-  isEsdTripped(): boolean {
+  public getTime() {
+    return this.time;
+  }
+
+  public isEsdTripped() {
     return this.esdLatched;
   }
 
-  /** True once temperature has fallen far enough that an operator would be
-   *  permitted to acknowledge/reset the interlock. Purely informational —
-   *  crossing this does not clear the trip by itself. */
-  isEsdResetPermitted(): boolean {
-    return this.state[2] <= ESD_RESET_TEMP;
+  public isEsdResetPermitted() {
+    return this.esdLatched && this.state.T <= 415.0;
   }
 
-  /** Operator action: clears the latched ESD trip, but only if temperature
-   *  has genuinely fallen below the reset threshold. Returns true if the
-   *  trip was actually cleared. */
-  acknowledgeEsd(): boolean {
-    if (this.esdLatched && this.isEsdResetPermitted()) {
+  public isFaulted() {
+    return this.faulted;
+  }
+
+  public acknowledgeEsd(): boolean {
+    if (this.isEsdResetPermitted()) {
       this.esdLatched = false;
       return true;
     }
     return false;
   }
 
-  /** True if the integrator ever produced a non-finite value and had to
-   *  freeze state as a safety fallback. Surfaced so the UI can warn the
-   *  user rather than silently displaying stale numbers forever. */
-  isFaulted(): boolean {
-    return this.faulted;
+  private getDerivatives(Ca: number, Cb: number, T: number) {
+    const { F, V, Caf, Tf, rho, Cp, R, k0, Ea, dHr, k02, Ea2, dHr2, UA } = this.params;
+    
+    // Kinetics
+    const k1 = k0 * Math.exp(-Ea / (R * T));
+    const k2 = k02 * Math.exp(-Ea2 / (R * T));
+    
+    const rate1 = k1 * Ca;
+    const rate2 = k2 * Cb;
+    
+    // Mass balances
+    const dCa = (F / V) * (Caf - Ca) - rate1;
+    const dCb = (F / V) * (0 - Cb) + rate1 - rate2;
+    
+    // Energy balance terms (K/min)
+    const rhoCp = rho * Cp;
+    const feed = (F / V) * (Tf - T);
+    const mainRxn = (Math.abs(dHr) / rhoCp) * rate1;
+    const sideRxn = (Math.abs(dHr2) / rhoCp) * rate2;
+    const cooling = (UA / (rhoCp * V)) * (this.Tc - T);
+    
+    const dT = feed + mainRxn + sideRxn + cooling;
+    
+    return { dCa, dCb, dT, feed, mainRxn, sideRxn, cooling, rate1, rate2 };
   }
 
-  private applyDisturbances(): void {
-    this.params.Tf = defaultParams.Tf + (this.tfDisturbanceOn ? this.tfMagnitude : 0);
-    this.params.F = defaultParams.F + (this.flowDisturbanceOn ? this.flowMagnitude : 0);
+  public getEnergyTerms(): EnergyTerms {
+    if (this.faulted) return { feed: 0, mainRxn: 0, sideRxn: 0, cooling: 0 };
+    const d = this.getDerivatives(this.state.Ca, this.state.Cb, this.state.T);
+    return {
+      feed: d.feed,
+      mainRxn: d.mainRxn,
+      sideRxn: d.sideRxn,
+      cooling: d.cooling
+    };
   }
 
-  /** Checks current temperature against the trip threshold and latches the
-   *  interlock. Called every RK4 substep (not just once per frame) so it
-   *  engages as soon as possible during a fast excursion. Does NOT auto
-   *  clear — see acknowledgeEsd(). */
-  private updateEsd(): void {
-    const T = this.state[2];
-    if (!Number.isFinite(T)) return;
-    if (!this.esdLatched && T >= ESD_TRIP_TEMP) {
+  public getRates(): ReactionRates {
+    if (this.faulted) return { rate1: 0, rate2: 0 };
+    const d = this.getDerivatives(this.state.Ca, this.state.Cb, this.state.T);
+    return {
+      rate1: d.rate1,
+      rate2: d.rate2
+    };
+  }
+
+  // 4. SOLVER INTEGRATION LOOP
+  public advanceRealTime(dtSeconds: number, simMinutesPerSecond: number, substeps: number): void {
+    if (this.faulted) return;
+    
+    const dtSimMinutes = dtSeconds * simMinutesPerSecond;
+    if (dtSimMinutes <= 0) return; // Prevent logging identical rows while paused
+    
+    const dtStep = dtSimMinutes / substeps;
+
+    for (let i = 0; i < substeps; i++) {
+      this.step(dtStep);
+      
+      if (this.faulted) break; // Freeze state and abort logging on NaN
+      
+      // Log exactly one row per accepted solver step
+      this.recordHistoryStep();
+    }
+  }
+
+  private step(dt: number) {
+    const { Ca, Cb, T } = this.state;
+
+    // Runge-Kutta 4th Order Integration
+    const k1 = this.getDerivatives(Ca, Cb, T);
+    const k2 = this.getDerivatives(Ca + 0.5 * dt * k1.dCa, Cb + 0.5 * dt * k1.dCb, T + 0.5 * dt * k1.dT);
+    const k3 = this.getDerivatives(Ca + 0.5 * dt * k2.dCa, Cb + 0.5 * dt * k2.dCb, T + 0.5 * dt * k2.dT);
+    const k4 = this.getDerivatives(Ca + dt * k3.dCa, Cb + dt * k3.dCb, T + dt * k3.dT);
+
+    const nextCa = Ca + (dt / 6) * (k1.dCa + 2 * k2.dCa + 2 * k3.dCa + k4.dCa);
+    const nextCb = Cb + (dt / 6) * (k1.dCb + 2 * k2.dCb + 2 * k3.dCb + k4.dCb);
+    const nextT = T + (dt / 6) * (k1.dT + 2 * k2.dT + 2 * k3.dT + k4.dT);
+
+    // Safeguard check
+    if (!Number.isFinite(nextCa) || !Number.isFinite(nextCb) || !Number.isFinite(nextT)) {
+      this.faulted = true;
+      return;
+    }
+
+    this.state.Ca = Math.max(0, nextCa);
+    this.state.Cb = Math.max(0, nextCb);
+    this.state.T = Math.max(200, Math.min(700, nextT)); // Hard physical bounds
+
+    // Emergency Shutdown (ESD) Latch Logic
+    if (this.state.T >= 440.0) {
       this.esdLatched = true;
     }
-  }
-
-  /** The Tc value actually used by the physics, as opposed to the
-   *  commanded value in params.Tc. When tripped, the ESD forces full
-   *  cooling regardless of manual or auto control, without overwriting
-   *  the user's setpoint — so control resumes at that setpoint once the
-   *  operator acknowledges the trip. */
-  private effectiveTc(): number {
-    return this.esdLatched ? 250 : this.params.Tc;
-  }
-
-  private derivatives(s: Float64Array, out: Float64Array): void {
-    const p = this.params;
-    const Ca = s[0];
-    const Cb = s[1];
-    const T = s[2];
-    const Tc = this.effectiveTc();
-
-    const kRate1 = p.k0 * Math.exp(-p.Ea / (p.R * T));
-    const rate1 = kRate1 * Ca;
-
-    const kRate2 = p.k0b * Math.exp(-p.Eab / (p.R * T));
-    const rate2 = kRate2 * Cb;
-
-    const FoverV = p.F / p.V;
-
-    out[0] = FoverV * (p.Caf - Ca) - rate1;
-    out[1] = FoverV * (0 - Cb) + rate1 - rate2;
-    out[2] =
-      FoverV * (p.Tf - T) +
-      (-p.dHr / (p.rho * p.Cp)) * rate1 +
-      (-p.dHrb / (p.rho * p.Cp)) * rate2 -
-      (p.UA / (p.V * p.rho * p.Cp)) * (T - Tc);
-  }
-
-  /** Recomputes the diagnostic breakdown (heat terms + rates) from the
-   *  current, settled state — never from an RK4 intermediate stage — so
-   *  the energy chart and pathway diagram always show physically
-   *  consistent snapshots. */
-  private computeDiagnostics(): void {
-    const p = this.params;
-    const s = this.state;
-    const Ca = s[0];
-    const Cb = s[1];
-    const T = s[2];
-    const Tc = this.effectiveTc();
-
-    if (!Number.isFinite(T)) return;
-
-    const kRate1 = p.k0 * Math.exp(-p.Ea / (p.R * T));
-    const rate1 = kRate1 * Ca;
-    const kRate2 = p.k0b * Math.exp(-p.Eab / (p.R * T));
-    const rate2 = kRate2 * Cb;
-    const FoverV = p.F / p.V;
-
-    this.diagRate1 = rate1;
-    this.diagRate2 = rate2;
-    this.diagFeed = FoverV * (p.Tf - T);
-    this.diagMainHeat = (-p.dHr / (p.rho * p.Cp)) * rate1;
-    this.diagSideHeat = (-p.dHrb / (p.rho * p.Cp)) * rate2;
-    this.diagCooling = -(p.UA / (p.V * p.rho * p.Cp)) * (T - Tc);
-  }
-
-  step(dt: number): void {
-    this.applyDisturbances();
-
-    const s = this.state;
-    const { k1, k2, k3, k4, tmp, deriv } = this;
-
-    const prevCa = s[0];
-    const prevCb = s[1];
-    const prevT = s[2];
-
-    this.derivatives(s, deriv);
-    k1[0] = deriv[0];
-    k1[1] = deriv[1];
-    k1[2] = deriv[2];
-
-    tmp[0] = s[0] + (dt / 2) * k1[0];
-    tmp[1] = s[1] + (dt / 2) * k1[1];
-    tmp[2] = s[2] + (dt / 2) * k1[2];
-    this.derivatives(tmp, deriv);
-    k2[0] = deriv[0];
-    k2[1] = deriv[1];
-    k2[2] = deriv[2];
-
-    tmp[0] = s[0] + (dt / 2) * k2[0];
-    tmp[1] = s[1] + (dt / 2) * k2[1];
-    tmp[2] = s[2] + (dt / 2) * k2[2];
-    this.derivatives(tmp, deriv);
-    k3[0] = deriv[0];
-    k3[1] = deriv[1];
-    k3[2] = deriv[2];
-
-    tmp[0] = s[0] + dt * k3[0];
-    tmp[1] = s[1] + dt * k3[1];
-    tmp[2] = s[2] + dt * k3[2];
-    this.derivatives(tmp, deriv);
-    k4[0] = deriv[0];
-    k4[1] = deriv[1];
-    k4[2] = deriv[2];
-
-    s[0] += (dt / 6) * (k1[0] + 2 * k2[0] + 2 * k3[0] + k4[0]);
-    s[1] += (dt / 6) * (k1[1] + 2 * k2[1] + 2 * k3[1] + k4[1]);
-    s[2] += (dt / 6) * (k1[2] + 2 * k2[2] + 2 * k3[2] + k4[2]);
-
-    const allFinite = Number.isFinite(s[0]) && Number.isFinite(s[1]) && Number.isFinite(s[2]);
-    if (!allFinite) {
-      // Safety net: never let NaN/Infinity reach the UI or 3D scene. Freeze
-      // at the last good state (clamped to hard physical bounds) and flag
-      // the fault so the caller can surface a warning.
-      s[0] = prevCa;
-      s[1] = prevCb;
-      s[2] = prevT;
-      this.faulted = true;
-    } else {
-      if (s[0] < 0) s[0] = 0;
-      if (s[1] < 0) s[1] = 0;
-      if (s[2] > T_HARD_MAX) s[2] = T_HARD_MAX;
-      if (s[2] < T_HARD_MIN) s[2] = T_HARD_MIN;
+    if (this.esdLatched) {
+      this.Tc = 250.0; // Force max cooling override
     }
 
-    this.updateEsd();
-    this.computeDiagnostics();
-    this.simTime += dt;
-  }
-
-  advanceRealTime(dtSeconds: number, simMinutesPerSecond = 0.5, substeps = 4): void {
-    const totalSimMinutes = dtSeconds * simMinutesPerSecond;
-    const h = totalSimMinutes / substeps;
-    for (let i = 0; i < substeps; i++) {
-      this.step(h);
-    }
-  }
-}
-
-/**
- * PI controller with direction-aware anti-windup: the integral term only
- * stops accumulating when the output is saturated AND the current error
- * would push it further into that same saturation direction. This lets
- * the controller recover cleanly once the error reverses sign, instead of
- * staying pinned at a limit due to a stale integral.
- */
-export class PIController {
-  Kp: number;
-  Ki: number;
-  outputMin: number;
-  outputMax: number;
-  private integral = 0;
-
-  constructor(Kp = 2.0, Ki = 0.6, outputMin = 250, outputMax = 450) {
-    this.Kp = Kp;
-    this.Ki = Ki;
-    this.outputMin = outputMin;
-    this.outputMax = outputMax;
-  }
-
-  reset(): void {
-    this.integral = 0;
-  }
-
-  /** Computes the next Tc command. dtMinutes must match the sim-time step. */
-  compute(setpoint: number, measured: number, dtMinutes: number): number {
-    const error = setpoint - measured;
-    const rawOutput = this.Kp * error + this.Ki * this.integral;
-
-    const saturatedHigh = rawOutput >= this.outputMax;
-    const saturatedLow = rawOutput <= this.outputMin;
-    const pushingFurtherHigh = saturatedHigh && error > 0;
-    const pushingFurtherLow = saturatedLow && error < 0;
-
-    if (!pushingFurtherHigh && !pushingFurtherLow) {
-      this.integral += error * dtMinutes;
-    }
-
-    const output = this.Kp * error + this.Ki * this.integral;
-    return Math.max(this.outputMin, Math.min(this.outputMax, output));
+    this.time += dt;
   }
 }

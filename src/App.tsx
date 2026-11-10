@@ -16,9 +16,6 @@ import { PhasePortraitChart } from "./PhasePortraitChart";
 import { ReactionPathway } from "./ReactionPathway";
 import { EnergyBalanceChart } from "./EnergyBalanceChart";
 
-const COLD_T = 300;
-const HOT_T = 450;
-
 type PresetKey = "cold" | "runaway" | "rejection";
 
 const SENSITIVITY_LABELS: Record<SensitivityKey, string> = {
@@ -28,132 +25,6 @@ const SENSITIVITY_LABELS: Record<SensitivityKey, string> = {
   dHr: "Heat of Reaction (dHr)",
 };
 
-function Card({ children }: { children: React.ReactNode }) {
-  return (
-    <div
-      style={{
-        background: "#0d1218",
-        border: "1px solid #1f2733",
-        borderRadius: 12,
-        padding: "14px 14px 12px",
-        boxShadow: "inset 0 1px 0 rgba(255,255,255,0.02)",
-      }}
-    >
-      {children}
-    </div>
-  );
-}
-
-function SectionLabel({ children }: { children: React.ReactNode }) {
-  return (
-    <div
-      style={{
-        fontSize: 11,
-        fontWeight: 700,
-        letterSpacing: 0.18,
-        color: "#8a94a6",
-        textTransform: "uppercase",
-        marginBottom: 12,
-      }}
-    >
-      {children}
-    </div>
-  );
-}
-
-function Metric({
-  label,
-  value,
-  mono = false,
-  valueColor,
-}: {
-  label: string;
-  value: string;
-  mono?: boolean;
-  valueColor?: string;
-}) {
-  return (
-    <div style={{ display: "flex", justifyContent: "space-between", gap: 8, padding: "3px 0" }}>
-      <span style={{ fontSize: 12.5, color: "#8a94a6" }}>{label}</span>
-      <span
-        className={mono ? "mono" : undefined}
-        style={{
-          fontSize: 12.5,
-          color: valueColor ?? "#eef1f6",
-          fontWeight: 700,
-          textAlign: "right",
-        }}
-      >
-        {value}
-      </span>
-    </div>
-  );
-}
-
-function ToggleRow({
-  label,
-  detail,
-  checked,
-  onChange,
-  accentColor,
-}: {
-  label: string;
-  detail: string;
-  checked: boolean;
-  onChange: () => void;
-  accentColor: string;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onChange}
-      style={{
-        width: "100%",
-        border: "1px solid #1f2733",
-        borderRadius: 10,
-        background: checked ? "rgba(255,255,255,0.02)" : "transparent",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "space-between",
-        padding: "10px 10px",
-        cursor: "pointer",
-        color: "#eef1f6",
-        textAlign: "left",
-      }}
-    >
-      <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-        <span style={{ fontSize: 13, fontWeight: 700 }}>{label}</span>
-        <span style={{ fontSize: 11, color: "#8a94a6" }}>{detail}</span>
-      </div>
-      <span
-        style={{
-          width: 26,
-          height: 16,
-          borderRadius: 999,
-          background: checked ? accentColor : "#2a313d",
-          position: "relative",
-          boxShadow: checked ? `0 0 0 1px ${accentColor}` : "inset 0 0 0 1px rgba(255,255,255,0.08)",
-          display: "inline-block",
-          flexShrink: 0,
-        }}
-      >
-        <span
-          style={{
-            position: "absolute",
-            top: 2,
-            left: checked ? 14 : 2,
-            width: 10,
-            height: 10,
-            borderRadius: "50%",
-            background: "#fff",
-            transition: "left 0.2s ease",
-          }}
-        />
-      </span>
-    </button>
-  );
-}
-
 export default function App() {
   const engineRef = useRef<CSTREngine>(new CSTREngine(0.5, 350, defaultParams));
   const controllerRef = useRef<PIController>(new PIController(2.0, 0.6, 250, 450));
@@ -162,6 +33,7 @@ export default function App() {
   const presetTimeoutsRef = useRef<number[]>([]);
 
   const [telemetry, setTelemetry] = useState({ Ca: 0.5, Cb: 0, T: 350, simTime: 0 });
+  const [recordStats, setRecordStats] = useState({ count: 0, duration: 0 });
   const [tc, setTc] = useState(defaultParams.Tc);
   const [tfDisturbance, setTfDisturbance] = useState(false);
   const [flowDisturbance, setFlowDisturbance] = useState(false);
@@ -196,6 +68,10 @@ export default function App() {
     const engine = engineRef.current;
     const controller = controllerRef.current;
 
+    if (engine.getHistory().length === 0) {
+      engine.resetState(0.5, 350); 
+    }
+
     const loop = (now: number) => {
       const dtSeconds = Math.min((now - lastTimeRef.current) / 1000, 0.1);
       lastTimeRef.current = now;
@@ -211,11 +87,19 @@ export default function App() {
 
       engine.advanceRealTime(dtSeconds, simMinutesPerSecond, 4);
       const { Ca, Cb, T } = engine.getState();
+      
       liveTempRef.current = T;
       liveCaRef.current = Ca;
       liveCbRef.current = Cb;
       energyTermsRef.current = engine.getEnergyTerms();
       ratesRef.current = engine.getRates();
+      
+      const history = engine.getHistory();
+      setRecordStats({
+        count: history.length,
+        duration: history.length > 0 ? history[history.length - 1].time_min : 0
+      });
+
       setTelemetry({ Ca, Cb, T, simTime: engine.getTime() });
       setEsdActive(engine.isEsdTripped());
       setEsdResetPermitted(engine.isEsdResetPermitted());
@@ -355,6 +239,56 @@ export default function App() {
       }, 4000);
       presetTimeoutsRef.current.push(id);
     }
+  };
+
+  const escapeCSV = (val: string | number | boolean) => {
+    const str = String(val);
+    if (str.includes(",") || str.includes('"') || str.includes("\n")) {
+      return `"${str.replace(/"/g, '""')}"`;
+    }
+    return str;
+  };
+
+  const handleExportCSV = () => {
+    const history = engineRef.current.getHistory();
+    if (history.length === 0) return;
+
+    const headers = [
+      "time_min", "temperature_K", "CA_mol_per_L", "CB_mol_per_L",
+      "coolant_temperature_K", "Qcool_J_per_min", "conversion_pct",
+      "selectivity_B_pct", "esd_latched", "scenario_preset", "auto_control_active"
+    ];
+
+    const currentScenario = activePreset || "manual";
+
+    const rows = history.map(r => [
+      r.time_min,
+      r.temperature_K,
+      r.CA_mol_per_L,
+      r.CB_mol_per_L,
+      r.coolant_temperature_K,
+      r.Qcool_J_per_min,
+      r.conversion_pct,
+      r.selectivity_B_pct,
+      r.esd_latched,
+      escapeCSV(currentScenario),
+      autoMode
+    ].join(","));
+
+    const csvContent = [headers.join(","), ...rows].join("\n");
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    
+    const link = document.createElement("a");
+    link.href = url;
+    
+    const dateStr = new Date().toISOString().replace(/[:.]/g, "-");
+    link.setAttribute("download", `cstr-${currentScenario}-${dateStr}.csv`);
+    
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   };
 
   const anyDisturbanceActive = tfDisturbance || flowDisturbance;
@@ -563,6 +497,38 @@ export default function App() {
           </Card>
 
           <Card>
+            <SectionLabel>Data Logging &amp; Export</SectionLabel>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+              <div>
+                <div style={{ fontSize: 12.5, fontWeight: 600, color: "#eef1f6" }}>Telemetry Buffer</div>
+                <div className="mono" style={{ fontSize: 10.5, color: "#5b6577", marginTop: 2 }}>
+                  {recordStats.count} samples · {recordStats.duration.toFixed(2)} min
+                </div>
+              </div>
+              <button
+                onClick={handleExportCSV}
+                disabled={recordStats.count === 0}
+                style={{
+                  padding: "6px 14px",
+                  borderRadius: 6,
+                  border: recordStats.count > 0 ? "1px solid #3ba8ff" : "1px solid #1f2733",
+                  background: recordStats.count > 0 ? "rgba(59, 168, 255, 0.1)" : "transparent",
+                  color: recordStats.count > 0 ? "#3ba8ff" : "#5b6577",
+                  fontSize: 11.5,
+                  fontWeight: 600,
+                  cursor: recordStats.count > 0 ? "pointer" : "not-allowed",
+                  transition: "all 0.2s"
+                }}
+              >
+                Export CSV
+              </button>
+            </div>
+            <div style={{ fontSize: 10.5, color: "#5b6577", lineHeight: 1.4 }}>
+              Logs physical process state at every RK4 integration step. Resetting the reactor starts a new log file.
+            </div>
+          </Card>
+
+          <Card>
             <SectionLabel>Live Telemetry</SectionLabel>
             <Metric label="Concentration, Ca" value={`${telemetry.Ca.toFixed(4)} mol/L`} mono />
             <Metric label="Concentration, Cb" value={`${telemetry.Cb.toFixed(4)} mol/L`} mono />
@@ -612,6 +578,8 @@ export default function App() {
             <PhasePortraitChart
               getCa={() => liveCaRef.current}
               getT={() => liveTempRef.current}
+              getTc={() => tc}
+              getTf={() => tfDisturbance ? 390.0 : 350.0}
               caMin={0}
               caMax={1.0}
               tMin={260}
@@ -658,171 +626,4 @@ export default function App() {
                   min={-50}
                   max={50}
                   step={1}
-                  value={sensitivityPct}
-                  onChange={(e) => handleSensitivityPctChange(parseFloat(e.target.value))}
-                />
-                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "#5b6577", marginTop: 6 }}>
-                  <span>-50%</span>
-                  <span>nominal</span>
-                  <span>+50%</span>
-                </div>
-                <div className="mono" style={{ fontSize: 10.5, color: "#5b6577", marginTop: 8 }}>
-                  {SENSITIVITY_LABELS[sensitivityKey]}: {defaultParams[sensitivityKey].toExponential(3)} → {(defaultParams[sensitivityKey] * (1 + sensitivityPct / 100)).toExponential(3)}
-                </div>
-                <button
-                  onClick={handleSensitivityReset}
-                  style={{
-                    marginTop: 10,
-                    padding: "5px 12px",
-                    borderRadius: 6,
-                    border: "1px solid #1f2733",
-                    background: "transparent",
-                    color: "#8a94a6",
-                    fontSize: 11.5,
-                    cursor: "pointer",
-                  }}
-                >
-                  Reset to Nominal
-                </button>
-              </>
-            )}
-            {!sensitivityKey && (
-              <div style={{ fontSize: 11, color: "#5b6577" }}>
-                Pick a parameter to explore how the reactor responds to model uncertainty, e.g. fouling (UA↓) or catalyst deactivation (k0↓).
-              </div>
-            )}
-          </Card>
-
-          <Card>
-            <SectionLabel>Sustained Disturbances</SectionLabel>
-            <ToggleRow
-              label="Feed Temp Fault"
-              detail={tfDisturbance ? "Tf = 390.0 K (+40)" : "Tf = 350.0 K (nominal)"}
-              checked={tfDisturbance}
-              onChange={toggleTfDisturbance}
-              accentColor="#ff6b52"
-            />
-            <div style={{ height: 10 }} />
-            <ToggleRow
-              label="Feed Flow Fault"
-              detail={flowDisturbance ? "F = 140.0 L/min (+40)" : "F = 100.0 L/min (nominal)"}
-              checked={flowDisturbance}
-              onChange={toggleFlowDisturbance}
-              accentColor="#3ba8ff"
-            />
-          </Card>
-
-          <Card>
-            <SectionLabel>Temperature Control</SectionLabel>
-
-            {controlsLocked && (
-              <div
-                style={{
-                  fontSize: 11.5,
-                  color: "#ff5548",
-                  fontWeight: 700,
-                  marginBottom: 12,
-                  padding: "8px 10px",
-                  background: "rgba(255,85,72,0.08)",
-                  border: "1px solid rgba(255,85,72,0.3)",
-                  borderRadius: 8,
-                }}
-              >
-                {faulted
-                  ? "Numerical fault — use Reset Reactor above to recover"
-                  : "ESD latched — use Acknowledge & Resume above once T ≤ 415 K"}
-              </div>
-            )}
-
-            <ToggleRow
-              label={autoMode ? "Auto (PI Control)" : "Manual"}
-              detail={autoMode ? "Controller is adjusting Tc" : "You are adjusting Tc"}
-              checked={autoMode}
-              onChange={() => !controlsLocked && setAutoMode((v) => !v)}
-              accentColor="#a78bfa"
-            />
-
-            {autoMode && (
-              <div style={{ marginTop: 14 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 8 }}>
-                  <span style={{ fontSize: 12.5, color: "#8a94a6" }}>Setpoint T</span>
-                  <span className="mono" style={{ fontSize: 18, fontWeight: 700, color: "#a78bfa" }}>
-                    {setpoint.toFixed(1)} K
-                  </span>
-                </div>
-                <input
-                  type="range"
-                  className="thermo-slider"
-                  min={280}
-                  max={420}
-                  step={0.5}
-                  value={setpoint}
-                  disabled={controlsLocked}
-                  onChange={(e) => setSetpoint(parseFloat(e.target.value))}
-                />
-              </div>
-            )}
-
-            <div style={{ height: 1, background: "#1f2733", margin: "14px 0" }} />
-
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 10 }}>
-              <span style={{ fontSize: 12.5, color: "#8a94a6" }}>
-                {autoMode ? "Tc (controller output)" : "Setpoint Tc"}
-              </span>
-              <span className="mono" style={{ fontSize: 20, fontWeight: 700 }}>
-                {tc.toFixed(1)} K
-              </span>
-            </div>
-            <input
-              type="range"
-              className="thermo-slider"
-              min={250}
-              max={450}
-              step={0.5}
-              value={tc}
-              disabled={autoMode || controlsLocked}
-              onChange={(e) => handleTcChange(parseFloat(e.target.value))}
-              style={autoMode || controlsLocked ? { opacity: 0.4, cursor: "not-allowed" } : undefined}
-            />
-            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "#5b6577", marginTop: 6 }}>
-              <span>250 K · cold</span>
-              <span>450 K · hot</span>
-            </div>
-
-            <div style={{ height: 1, background: "#1f2733", margin: "14px 0" }} />
-
-            <ToggleRow
-              label="Cutaway View"
-              detail={cutawayOn ? "Vessel sliced open" : "Solid vessel"}
-              checked={cutawayOn}
-              onChange={() => setCutawayOn((v) => !v)}
-              accentColor="#3ba8ff"
-            />
-          </Card>
-        </div>
-
-        <div style={{ flex: 1, position: "relative" }}>
-          <Canvas
-            camera={{ position: [4.5, 2.8, 4.5], fov: 42 }}
-            shadows
-            onCreated={({ gl }) => {
-              gl.localClippingEnabled = true;
-            }}
-          >
-            <color attach="background" args={["#05070a"]} />
-            <fog attach="fog" args={["#05070a", 8, 18]} />
-            <ReactorMesh
-              getTemperature={() => liveTempRef.current}
-            />
-            <ambientLight intensity={0.6} />
-            <directionalLight position={[5, 8, 5]} intensity={1.2} castShadow />
-            <Environment preset="city" />
-            <ContactShadows position={[0, -1.5, 0]} opacity={0.35} scale={10} blur={2} />
-            <Grid position={[0, -1.51, 0]} args={[10, 10]} />
-            <OrbitControls makeDefault />
-          </Canvas>
-        </div>
-      </div>
-    </div>
-  );
-}
+                  value={sensitivity
