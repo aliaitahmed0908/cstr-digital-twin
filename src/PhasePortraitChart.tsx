@@ -78,10 +78,11 @@ export function PhasePortraitChart({
       const rhoCp = rho * Cp;
       const dilution = Math.max(1e-4, F / Math.max(1.0, V));
 
-      // 2. Draw Vector Field (Phase-Plane Trajectories)
-      ctx.strokeStyle = "rgba(138, 148, 166, 0.25)";
-      ctx.lineWidth = 1;
-      const gridSteps = 16;
+      // 2. Draw High-Visibility Vector Field (Cyan arrows with heads)
+      ctx.strokeStyle = "rgba(59, 168, 255, 0.7)";
+      ctx.fillStyle = "rgba(59, 168, 255, 0.7)";
+      ctx.lineWidth = 1.1;
+      const gridSteps = 14;
       for (let i = 1; i < gridSteps; i++) {
         for (let j = 1; j < gridSteps; j++) {
           const ca = caMin + (i / gridSteps) * (caMax - caMin);
@@ -100,8 +101,8 @@ export function PhasePortraitChart({
           const dy = -dT * (height / (tMax - tMin)); // inverted Y
 
           const mag = Math.sqrt(dx * dx + dy * dy);
-          if (mag > 0) {
-            const arrowLen = 7;
+          if (mag > 1e-3) {
+            const arrowLen = 8;
             const nx = (dx / mag) * arrowLen;
             const ny = (dy / mag) * arrowLen;
             const px = toX(ca);
