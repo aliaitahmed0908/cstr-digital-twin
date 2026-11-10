@@ -21,7 +21,7 @@ const LEG_SPLAY_HEIGHT = 0.45;
 
 const EXTERIOR_COLOR = 0x1a3d6b;
 
-// Custom GLSL Shader for Thermal Wall Glow (Transitions from Cool Steel Blue to Incandescent Red >400K)
+// Custom GLSL Shader for Thermal Wall Glow
 const ThermalWallShaderMaterial = {
   uniforms: {
     uTemperature: { value: 350.0 },
@@ -43,24 +43,20 @@ const ThermalWallShaderMaterial = {
     uniform float uCutaway;
 
     void main() {
-      // Cutaway clipping check based on Z plane if cutaway is enabled
       if (uCutaway > 0.5 && vPosition.z < 0.0 && vPosition.y > -1.0 && vPosition.y < 1.0) {
         discard;
       }
 
-      // Rim lighting for metallic sheen
       float intensity = pow(0.6 - dot(vNormal, vec3(0, 0, 1)), 2.0);
       vec3 baseSteel = vec3(0.08, 0.15, 0.28) + vec3(0.25) * intensity;
 
-      // Thermal glow factor (crosses threshold around 400K toward runaway risk)
       float tFactor = clamp((uTemperature - 380.0) / 70.0, 0.0, 1.0);
       
       vec3 coolColor = baseSteel;
-      vec3 hotColor = vec3(0.95, 0.22, 0.08) * (1.0 + tFactor * 1.8); // Incandescent red glow
+      vec3 hotColor = vec3(0.95, 0.22, 0.08) * (1.0 + tFactor * 1.8);
 
       vec3 finalColor = mix(coolColor, hotColor, tFactor);
 
-      // Inner fluid level tint
       if (vPosition.y < -0.1) {
         finalColor += vec3(0.0, 0.1, 0.15) * (tFactor * 0.4);
       }
@@ -87,11 +83,9 @@ export function ReactorMesh({
   const particleMaterialRef = useRef<THREE.PointsMaterial>(null);
 
   const hotColor = useMemo(() => new THREE.Color(0xff2a1e), []);
-  const lerped = useMemo(() => new THREE.Color(), []);
   const jacketBaseColor = useMemo(() => new THREE.Color(EXTERIOR_COLOR), []);
   const jacketLerped = useMemo(() => new THREE.Color(), []);
 
-  // Create custom shader material instance once
   const customShaderMat = useMemo(
     () =>
       new THREE.ShaderMaterial({
@@ -134,7 +128,6 @@ export function ReactorMesh({
     const T = getTemperature();
     const t = THREE.MathUtils.clamp((T - coldTemp) / (hotTemp - coldTemp), 0, 1);
 
-    // Update GLSL Shader Uniforms for Dynamic Wall Glow
     if (shaderMaterialRef.current) {
       shaderMaterialRef.current.uniforms.uTemperature.value = T;
       shaderMaterialRef.current.uniforms.uCutaway.value = cutawayEnabled ? 1.0 : 0.0;
@@ -244,7 +237,6 @@ export function ReactorMesh({
         );
       })}
 
-      {/* Main Reactor Cylinder using Thermal Wall GLSL Shader */}
       <mesh position={[0, 0, 0]} castShadow>
         <cylinderGeometry args={[VESSEL_RADIUS, VESSEL_RADIUS, VESSEL_HEIGHT, 48, 1, false]} />
         <primitive
@@ -335,7 +327,6 @@ export function ReactorMesh({
         />
       </points>
 
-      {/* Agitator Assembly */}
       <group ref={agitatorRef} position={[0, VESSEL_HEIGHT / 2, 0]}>
         <mesh>
           <cylinderGeometry args={[0.05, 0.05, VESSEL_HEIGHT * 1.05, 12]} />
