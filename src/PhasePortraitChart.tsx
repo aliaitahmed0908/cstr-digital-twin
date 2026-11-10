@@ -43,7 +43,7 @@ export function PhasePortraitChart({
       
       ctx.clearRect(0, 0, width, height);
 
-      // Background grid & axes
+      // Background grid
       ctx.strokeStyle = "#1f2733";
       ctx.lineWidth = 1;
       ctx.beginPath();
@@ -67,7 +67,6 @@ export function PhasePortraitChart({
       const toX = (ca: number) => ((ca - caMin) / (caMax - caMin)) * width;
       const toY = (t: number) => height - ((t - tMin) / (tMax - tMin)) * height;
 
-      // Model parameters for nullcline calculations
       const Caf = 1.0;
       const rho = 1000.0;
       const Cp = 4.18;
@@ -79,7 +78,7 @@ export function PhasePortraitChart({
       const rhoCp = rho * Cp;
       const dilution = Math.max(1e-4, F / Math.max(1.0, V));
 
-      // Draw Ca Nullcline (dCa/dt = 0) -> Purple curve with finite safety guards
+      // 1. Draw Ca Nullcline (dCa/dt = 0) -> Purple curve
       ctx.strokeStyle = "#a78bfa";
       ctx.lineWidth = 2;
       ctx.beginPath();
@@ -109,46 +108,39 @@ export function PhasePortraitChart({
       }
       ctx.stroke();
 
-      // Draw T Nullcline (dT/dt = 0) -> Orange curve with finite safety guards
+      // 2. Draw T Nullcline (dT/dt = 0) -> Smooth Orange curve via explicit Ca(T) evaluation
       ctx.strokeStyle = "#ffb545";
       ctx.lineWidth = 2;
       ctx.beginPath();
       let firstT = true;
-      for (let px = 0; px <= width; px += 2) {
-        const ca = caMin + (px / width) * (caMax - caMin);
-        let bestT = tMin;
-        let minDiff = Infinity;
-        
-        for (let T_test = tMin; T_test <= tMax; T_test += 1.0) {
-          const expTerm = Math.exp(-Ea / (R * T_test));
-          if (!Number.isFinite(expTerm)) continue;
+      
+      for (let T_test = tMin; T_test <= tMax; T_test += 0.5) {
+        const expTerm = Math.exp(-Ea / (R * T_test));
+        if (!Number.isFinite(expTerm)) continue;
 
-          const k1 = k0 * expTerm;
-          const heatGen = (Math.abs(dHr) / rhoCp) * k1 * ca;
-          const heatRem = dilution * (T_test - tf) + (UA / (rhoCp * Math.max(1.0, V))) * (T_test - tc);
-          const diff = Math.abs(heatGen - heatRem);
-          
-          if (Number.isFinite(diff) && diff < minDiff) {
-            minDiff = diff;
-            bestT = T_test;
-          }
-        }
+        const k1 = k0 * expTerm;
+        const heatRem = dilution * (T_test - tf) + (UA / (rhoCp * Math.max(1.0, V))) * (T_test - tc);
+        const heatGenCoeff = (Math.abs(dHr) / rhoCp) * k1;
 
-        if (minDiff < 15.0) {
-          const py = toY(bestT);
-          if (Number.isFinite(py)) {
-            if (firstT) {
-              ctx.moveTo(px, py);
-              firstT = false;
-            } else {
-              ctx.lineTo(px, py);
+        if (heatGenCoeff > 1e-6) {
+          const ca = heatRem / heatGenCoeff;
+          if (Number.isFinite(ca) && ca >= caMin && ca <= caMax) {
+            const px = toX(ca);
+            const py = toY(T_test);
+            if (Number.isFinite(px) && Number.isFinite(py)) {
+              if (firstT) {
+                ctx.moveTo(px, py);
+                firstT = false;
+              } else {
+                ctx.lineTo(px, py);
+              }
             }
           }
         }
       }
       ctx.stroke();
 
-      // Draw current state operating point dot with safety checks
+      // 3. Draw current state operating point dot
       if (Number.isFinite(currentCa) && Number.isFinite(currentT)) {
         const dotX = toX(currentCa);
         const dotY = toY(currentT);
