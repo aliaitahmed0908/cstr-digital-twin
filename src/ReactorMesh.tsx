@@ -21,7 +21,6 @@ const LEG_SPLAY_HEIGHT = 0.45;
 
 const EXTERIOR_COLOR = 0x1a3d6b;
 
-// Custom GLSL Shader for Thermal Wall Glow
 const ThermalWallShaderMaterial = {
   uniforms: {
     uTemperature: { value: 350.0 },

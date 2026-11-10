@@ -175,6 +175,16 @@ export class CSTREngine {
     if (fault === "caf") this.cafSpikeActive = active;
   }
 
+  public setDesignParam(key: "F" | "V", value: number): void {
+    if (key === "F" || key === "V") {
+      this.params[key] = Math.max(1.0, value);
+    }
+  }
+
+  public getDesignParams() {
+    return { F: this.params.F, V: this.params.V, tau: this.params.V / this.params.F };
+  }
+
   public resetSensitivityParams(): void {
     SENSITIVITY_KEYS.forEach((key) => {
       this.params[key] = this.baseParams[key];

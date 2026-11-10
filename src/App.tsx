@@ -40,6 +40,10 @@ export default function App() {
   const [kp, setKp] = useState(2.0);
   const [tauI, setTauI] = useState(0.6);
 
+  // Design Parameters (Residence Time V and F)
+  const [volume, setVolume] = useState(defaultParams.V);
+  const [flowRate, setFlowRate] = useState(defaultParams.F);
+
   // Disturbances & Faults
   const [tfDisturbance, setTfDisturbance] = useState(false);
   const [flowDisturbance, setFlowDisturbance] = useState(false);
@@ -136,6 +140,16 @@ export default function App() {
   const handleTcChange = (value: number) => {
     setTc(value);
     engineRef.current.setTc(value);
+  };
+
+  const handleVolumeChange = (v: number) => {
+    setVolume(v);
+    engineRef.current.setDesignParam("V", v);
+  };
+
+  const handleFlowRateChange = (f: number) => {
+    setFlowRate(f);
+    engineRef.current.setDesignParam("F", f);
   };
 
   const toggleTfDisturbance = () => {
@@ -602,6 +616,46 @@ export default function App() {
           </Card>
 
           <Card>
+            <SectionLabel>Reactor Design Parameters ($\tau = V/F$)</SectionLabel>
+            
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 4 }}>
+              <span style={{ fontSize: 12, color: "#8a94a6" }}>Volume ($V$)</span>
+              <span className="mono" style={{ fontSize: 14, fontWeight: 700, color: "#3ba8ff" }}>
+                {volume.toFixed(0)} L
+              </span>
+            </div>
+            <input
+              type="range"
+              className="thermo-slider"
+              min={20}
+              max={300}
+              step={5}
+              value={volume}
+              onChange={(e) => handleVolumeChange(parseFloat(e.target.value))}
+            />
+
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginTop: 10, marginBottom: 4 }}>
+              <span style={{ fontSize: 12, color: "#8a94a6" }}>Flow Rate ($F$)</span>
+              <span className="mono" style={{ fontSize: 14, fontWeight: 700, color: "#3ba8ff" }}>
+                {flowRate.toFixed(0)} L/min
+              </span>
+            </div>
+            <input
+              type="range"
+              className="thermo-slider"
+              min={20}
+              max={250}
+              step={5}
+              value={flowRate}
+              onChange={(e) => handleFlowRateChange(parseFloat(e.target.value))}
+            />
+
+            <div className="mono" style={{ fontSize: 11, color: "#a78bfa", marginTop: 10 }}>
+              Residence Time ($\tau$): {(volume / flowRate).toFixed(2)} min
+            </div>
+          </Card>
+
+          <Card>
             <SectionLabel>Reaction Pathway</SectionLabel>
             <ReactionPathway
               getCa={() => liveCaRef.current}
@@ -636,6 +690,8 @@ export default function App() {
               getT={() => liveTempRef.current}
               getTc={() => tc}
               getTf={() => tfDisturbance ? 390.0 : 350.0}
+              getF={() => flowRate}
+              getV={() => volume}
               caMin={0}
               caMax={1.0}
               tMin={260}
@@ -812,7 +868,6 @@ export default function App() {
                   onChange={(e) => setSetpoint(parseFloat(e.target.value))}
                 />
 
-                {/* MANUAL PID TUNING SANDBOX */}
                 <div style={{ marginTop: 14, paddingTop: 12, borderTop: "1px dashed #1f2733" }}>
                   <div style={{ fontSize: 11, letterSpacing: 0.5, textTransform: "uppercase", color: "#a78bfa", marginBottom: 8, fontWeight: 600 }}>
                     PID Tuning Sandbox

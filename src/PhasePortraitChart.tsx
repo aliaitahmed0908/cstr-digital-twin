@@ -1,17 +1,17 @@
 import { useEffect, useRef } from "react";
-import { defaultParams } from "./simulation";
 
 interface PhasePortraitChartProps {
   getCa: () => number;
   getT: () => number;
-  getTc?: () => number;
-  getTf?: () => number;
+  getTc: () => number;
+  getTf: () => number;
+  getF: () => number;
+  getV: () => number;
   caMin?: number;
   caMax?: number;
   tMin?: number;
   tMax?: number;
   tripTemp?: number;
-  trailLength?: number;
 }
 
 export function PhasePortraitChart({
@@ -19,27 +19,15 @@ export function PhasePortraitChart({
   getT,
   getTc,
   getTf,
+  getF,
+  getV,
   caMin = 0,
   caMax = 1.0,
   tMin = 260,
   tMax = 460,
   tripTemp = 440,
-  trailLength = 150,
 }: PhasePortraitChartProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  
-  const caTrail = useRef<Float64Array>(new Float64Array(trailLength));
-  const tTrail = useRef<Float64Array>(new Float64Array(trailLength));
-  const writeIndex = useRef(0);
-  const filled = useRef(0);
-  const lastSampleTime = useRef(0);
-  const rafRef = useRef<number>(0);
-
-  // ISOLATE GETTERS FROM REACT RENDER CYCLE
-  const getters = useRef({ getCa, getT, getTc, getTf });
-  useEffect(() => {
-    getters.current = { getCa, getT, getTc, getTf };
-  }, [getCa, getT, getTc, getTf]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -47,217 +35,126 @@ export function PhasePortraitChart({
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    const sampleIntervalMs = 100;
+    let animId: number;
 
-    const draw = (now: number) => {
-      const { getCa, getT, getTc, getTf } = getters.current;
-
-      // Data Sampling
-      if (now - lastSampleTime.current >= sampleIntervalMs) {
-        lastSampleTime.current = now;
-        const idx = writeIndex.current % trailLength;
-        caTrail.current[idx] = getCa();
-        tTrail.current[idx] = getT();
-        writeIndex.current++;
-        filled.current = Math.min(filled.current + 1, trailLength);
-      }
-
-      // High-DPI Canvas Setup
-      const dpr = window.devicePixelRatio || 1;
-      const rect = canvas.getBoundingClientRect();
-      const w = rect.width || 300;
-      const h = rect.height || 180;
-      if (canvas.width !== w * dpr || canvas.height !== h * dpr) {
-        canvas.width = w * dpr;
-        canvas.height = h * dpr;
-      }
+    const render = () => {
+      const width = canvas.width;
+      const height = canvas.height;
       
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      ctx.clearRect(0, 0, w, h);
+      ctx.clearRect(0, 0, width, height);
 
-      // Layout Padding
-      const padding = { top: 20, right: 15, bottom: 30, left: 45 };
-      const plotW = w - padding.left - padding.right;
-      const plotH = h - padding.top - padding.bottom;
-
-      const mapCaToX = (val: number) =>
-        padding.left + ((val - caMin) / (caMax - caMin)) * plotW;
-      const mapTempToY = (val: number) =>
-        padding.top + plotH - ((val - tMin) / (tMax - tMin)) * plotH;
-
-      ctx.fillStyle = "#0a0d13";
-      ctx.fillRect(0, 0, w, h);
-
-      // CLIPPING MASK FOR DATA CURVES
-      ctx.save();
-      ctx.beginPath();
-      ctx.rect(padding.left, padding.top, plotW, plotH);
-      ctx.clip();
-
-      // THEORETICAL NULLCLINES (Strictly Typed)
-      const currentTc = getTc ? getTc() : 300;
-      const currentTf = getTf ? getTf() : (defaultParams.Tf ?? 350);
-      
-      const F = defaultParams.F ?? 100;
-      const V = defaultParams.V ?? 100;
-      const Caf = defaultParams.Caf ?? 1.0;
-      const R = defaultParams.R ?? 8.314;
-      const rho = defaultParams.rho ?? 1000;
-      const Cp = defaultParams.Cp ?? 4.18;
-      const rhoCp = rho * Cp;
-      const k0 = defaultParams.k0 ?? 7.2e10;
-      const Ea = defaultParams.Ea ?? 72750;
-      const dHr = defaultParams.dHr ?? -50000;
-      const UA = defaultParams.UA ?? 50000;
-      const tau = V / F;
-
-      ctx.lineWidth = 1.5;
-      ctx.setLineDash([4, 4]);
-
-      // A. Concentration Nullcline (Purple)
-      ctx.beginPath();
-      ctx.strokeStyle = "rgba(167, 139, 250, 0.7)"; 
-      for (let T = tMin - 10; T <= tMax + 10; T += 2) {
-        const k1 = k0 * Math.exp(-Ea / (R * T));
-        const Ca_null = Caf / (1 + k1 * tau);
-        const x = mapCaToX(Ca_null);
-        const y = mapTempToY(T);
-        if (T === tMin - 10) ctx.moveTo(x, y);
-        else ctx.lineTo(x, y);
-      }
-      ctx.stroke();
-
-      // B. Thermal Nullcline (Orange)
-      ctx.beginPath();
-      ctx.strokeStyle = "rgba(251, 146, 60, 0.7)";
-      for (let T = tMin - 10; T <= tMax + 10; T += 2) {
-        const k1 = k0 * Math.exp(-Ea / (R * T));
-        let heatGenFactor = (Math.abs(dHr) / rhoCp) * k1;
-        
-        if (defaultParams.k02 !== undefined && defaultParams.Ea2 !== undefined) {
-          const k2 = defaultParams.k02 * Math.exp(-defaultParams.Ea2 / (R * T));
-          const dHr2 = defaultParams.dHr2 ?? -20000;
-          heatGenFactor += (Math.abs(dHr2) / rhoCp) * k2 * (k1 / (1 / tau + k2));
-        }
-        
-        const heatRemoval = (T - currentTf) / tau + (UA / (rhoCp * V)) * (T - currentTc);
-        
-        if (heatGenFactor > 1e-10) {
-          const Ca_null = heatRemoval / heatGenFactor;
-          const x = mapCaToX(Ca_null);
-          const y = mapTempToY(T);
-          if (T === tMin - 10) ctx.moveTo(x, y);
-          else ctx.lineTo(x, y);
-        }
-      }
-      ctx.stroke();
-      ctx.setLineDash([]);
-      
-      // LIVE TRAJECTORY TRAIL
-      const count = filled.current;
-      if (count > 1) {
-        const startIdx = writeIndex.current - count;
-
-        ctx.lineWidth = 1.8;
-        for (let i = 1; i < count; i++) {
-          const idxPrev = (startIdx + i - 1 + trailLength * 2) % trailLength;
-          const idxCurr = (startIdx + i + trailLength * 2) % trailLength;
-          
-          const x1 = mapCaToX(caTrail.current[idxPrev]);
-          const y1 = mapTempToY(tTrail.current[idxPrev]);
-          const x2 = mapCaToX(caTrail.current[idxCurr]);
-          const y2 = mapTempToY(tTrail.current[idxCurr]);
-          
-          const alpha = i / count;
-          ctx.strokeStyle = `rgba(56, 189, 248, ${alpha})`;
-          
-          ctx.beginPath();
-          ctx.moveTo(x1, y1);
-          ctx.lineTo(x2, y2);
-          ctx.stroke();
-        }
-
-        // Current Operating Point Dot
-        const lastIdx = (writeIndex.current - 1 + trailLength * 2) % trailLength;
-        const cx = mapCaToX(caTrail.current[lastIdx]);
-        const cy = mapTempToY(tTrail.current[lastIdx]);
-        const currentT = tTrail.current[lastIdx];
-
-        ctx.beginPath();
-        ctx.arc(cx, cy, 4, 0, Math.PI * 2);
-        ctx.fillStyle = (tripTemp !== undefined && currentT >= tripTemp) ? "#ff5548" : "#38bdf8";
-        ctx.fill();
-      }
-
-      ctx.restore(); // Remove clipping mask
-
-      // Grid Lines & Axes Overlays
       ctx.strokeStyle = "#1f2733";
       ctx.lineWidth = 1;
-      ctx.fillStyle = "#5b6577";
-      ctx.font = "10px monospace";
-
-      for (let i = 0; i <= 4; i++) {
-        const v = caMin + (i / 4) * (caMax - caMin);
-        const x = mapCaToX(v);
-        ctx.beginPath();
-        ctx.moveTo(x, padding.top);
-        ctx.lineTo(x, padding.top + plotH);
-        ctx.stroke();
-        ctx.textAlign = "center";
-        ctx.fillText(v.toFixed(2), x, padding.top + plotH + 14);
+      ctx.beginPath();
+      for (let x = 0; x < width; x += 40) {
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x, height);
       }
-
-      for (let i = 0; i <= 4; i++) {
-        const v = tMin + (i / 4) * (tMax - tMin);
-        const y = mapTempToY(v);
-        ctx.beginPath();
-        ctx.moveTo(padding.left, y);
-        ctx.lineTo(padding.left + plotW, y);
-        ctx.stroke();
-        ctx.textAlign = "right";
-        ctx.fillText(`${Math.round(v)}K`, padding.left - 6, y + 3);
+      for (let y = 0; y < height; y += 30) {
+        ctx.moveTo(0, y);
+        ctx.lineTo(width, y);
       }
+      ctx.stroke();
 
-      if (tripTemp !== undefined && tripTemp >= tMin && tripTemp <= tMax) {
-        const tripY = mapTempToY(tripTemp);
-        ctx.setLineDash([4, 4]);
-        ctx.strokeStyle = "#ff5548";
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        ctx.moveTo(padding.left, tripY);
-        ctx.lineTo(padding.left + plotW, tripY);
-        ctx.stroke();
-        ctx.setLineDash([]);
+      const currentCa = getCa();
+      const currentT = getT();
+      const tc = getTc();
+      const tf = getTf();
+      const F = getF();
+      const V = getV();
+
+      const toX = (ca: number) => ((ca - caMin) / (caMax - caMin)) * width;
+      const toY = (t: number) => height - ((t - tMin) / (tMax - tMin)) * height;
+
+      const Caf = 1.0;
+      const rho = 1000.0;
+      const Cp = 4.18;
+      const R = 8.314;
+      const k0 = 7.2e10;
+      const Ea = 72750.0;
+      const dHr = -50000.0;
+      const UA = 50000.0;
+      const rhoCp = rho * Cp;
+      const dilution = F / V;
+
+      // Draw Ca Nullcline (dCa/dt = 0) -> Purple curve
+      ctx.strokeStyle = "#a78bfa";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      let firstCa = true;
+      for (let px = 0; px <= width; px += 2) {
+        const ca = caMin + (px / width) * (caMax - caMin);
+        const k1 = (dilution * Math.max(1e-6, Caf - ca)) / Math.max(1e-6, ca);
+        if (k1 > 0 && k1 < k0) {
+          const T = -Ea / (R * Math.log(k1 / k0));
+          if (T >= tMin && T <= tMax) {
+            const py = toY(T);
+            if (firstCa) {
+              ctx.moveTo(px, py);
+              firstCa = false;
+            } else {
+              ctx.lineTo(px, py);
+            }
+          }
+        }
       }
+      ctx.stroke();
 
-      // Legend
-      ctx.textAlign = "right";
-      ctx.fillStyle = "rgba(167, 139, 250, 0.9)";
-      ctx.fillText("dCa/dt = 0", padding.left + plotW - 5, padding.top + 5);
-      ctx.fillStyle = "rgba(251, 146, 60, 0.9)";
-      ctx.fillText("dT/dt = 0", padding.left + plotW - 5, padding.top + 18);
+      // Draw T Nullcline (dT/dt = 0) -> Orange curve
+      ctx.strokeStyle = "#ffb545";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      let firstT = true;
+      for (let px = 0; px <= width; px += 2) {
+        const ca = caMin + (px / width) * (caMax - caMin);
+        let bestT = tMin;
+        let minDiff = Infinity;
+        for (let T_test = tMin; T_test <= tMax; T_test += 0.5) {
+          const k1 = k0 * Math.exp(-Ea / (R * T_test));
+          const heatGen = (Math.abs(dHr) / rhoCp) * k1 * ca;
+          const heatRem = dilution * (T_test - tf) + (UA / (rhoCp * V)) * (T_test - tc);
+          const diff = Math.abs(heatGen - heatRem);
+          if (diff < minDiff) {
+            minDiff = diff;
+            bestT = T_test;
+          }
+        }
+        if (minDiff < 5.0) {
+          const py = toY(bestT);
+          if (firstT) {
+            ctx.moveTo(px, py);
+            firstT = false;
+          } else {
+            ctx.lineTo(px, py);
+          }
+        }
+      }
+      ctx.stroke();
 
-      rafRef.current = requestAnimationFrame(draw);
+      const dotX = toX(currentCa);
+      const dotY = toY(currentT);
+      ctx.fillStyle = currentT >= tripTemp ? "#ff5548" : "#34d399";
+      ctx.beginPath();
+      ctx.arc(dotX, dotY, 6, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = "#ffffff";
+      ctx.lineWidth = 2;
+      ctx.stroke();
+
+      animId = requestAnimationFrame(render);
     };
 
-    rafRef.current = requestAnimationFrame(draw);
-    return () => cancelAnimationFrame(rafRef.current);
-  }, [caMin, caMax, tMin, tMax, tripTemp, trailLength]);
+    animId = requestAnimationFrame(render);
+    return () => cancelAnimationFrame(animId);
+  }, [getCa, getT, getTc, getTf, getF, getV, caMin, caMax, tMin, tMax, tripTemp]);
 
   return (
-    <div style={{ width: "100%" }}>
-      <canvas
-        ref={canvasRef}
-        style={{
-          width: "100%",
-          height: 180, 
-          display: "block",
-          borderRadius: 8,
-          background: "#0a0d13",
-          border: "1px solid #1f2733",
-        }}
-      />
+    <div style={{ position: "relative", width: "100%", height: 180, background: "#06090f", borderRadius: 8, overflow: "hidden", border: "1px solid #1f2733" }}>
+      <canvas ref={canvasRef} width={340} height={180} style={{ width: "100%", height: "100%", display: "block" }} />
+      <div style={{ position: "absolute", bottom: 6, left: 8, display: "flex", gap: 12, fontSize: 10, color: "#8a94a6" }}>
+        <span style={{ color: "#a78bfa" }}>— $dC_A/dt = 0$</span>
+        <span style={{ color: "#ffb545" }}>— $dT/dt = 0$</span>
+      </div>
     </div>
   );
 }
