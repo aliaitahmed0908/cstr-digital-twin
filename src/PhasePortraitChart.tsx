@@ -4,7 +4,7 @@ import { defaultParams } from "./simulation";
 interface PhasePortraitChartProps {
   getCa: () => number;
   getT: () => number;
-  getTc: () => number;
+  getTc?: () => number;
   getTf?: () => number;
   caMin?: number;
   caMax?: number;
@@ -35,6 +35,13 @@ export function PhasePortraitChart({
   const lastSampleTime = useRef(0);
   const rafRef = useRef<number>(0);
 
+  // 1. ISOLATE GETTERS FROM REACT RENDER CYCLE
+  // This stops the main thread from freezing and breaking your UI toggles
+  const getters = useRef({ getCa, getT, getTc, getTf });
+  useEffect(() => {
+    getters.current = { getCa, getT, getTc, getTf };
+  }, [getCa, getT, getTc, getTf]);
+
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -44,7 +51,9 @@ export function PhasePortraitChart({
     const sampleIntervalMs = 100;
 
     const draw = (now: number) => {
-      // 1. Data Sampling (Ring Buffer)
+      const { getCa, getT, getTc, getTf } = getters.current;
+
+      // 2. Data Sampling (Ring Buffer)
       if (now - lastSampleTime.current >= sampleIntervalMs) {
         lastSampleTime.current = now;
         const idx = writeIndex.current % trailLength;
@@ -54,78 +63,43 @@ export function PhasePortraitChart({
         filled.current = Math.min(filled.current + 1, trailLength);
       }
 
-      // 2. High-DPI Canvas Setup
+      // 3. High-DPI Canvas Setup
       const dpr = window.devicePixelRatio || 1;
       const rect = canvas.getBoundingClientRect();
-      const w = rect.width;
-      const h = rect.height;
+      const w = rect.width || 300;
+      const h = rect.height || 180;
       if (canvas.width !== w * dpr || canvas.height !== h * dpr) {
         canvas.width = w * dpr;
         canvas.height = h * dpr;
       }
+      
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.clearRect(0, 0, w, h);
 
-      // 3. Layout Padding
+      // 4. Layout Padding
       const padding = { top: 20, right: 15, bottom: 30, left: 45 };
       const plotW = w - padding.left - padding.right;
       const plotH = h - padding.top - padding.bottom;
 
       const mapCaToX = (val: number) =>
-        padding.left + Math.max(-0.5, Math.min(1.5, (val - caMin) / (caMax - caMin))) * plotW;
+        padding.left + ((val - caMin) / (caMax - caMin)) * plotW;
       const mapTempToY = (val: number) =>
-        padding.top + plotH - Math.max(-0.5, Math.min(1.5, (val - tMin) / (tMax - tMin))) * plotH;
+        padding.top + plotH - ((val - tMin) / (tMax - tMin)) * plotH;
 
       ctx.fillStyle = "#0a0d13";
       ctx.fillRect(0, 0, w, h);
 
-      // Grid Lines
-      ctx.strokeStyle = "#1f2733";
-      ctx.lineWidth = 1;
-      ctx.fillStyle = "#5b6577";
-      ctx.font = "10px monospace";
+      // 5. CLIPPING MASK FOR DATA CURVES
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(padding.left, padding.top, plotW, plotH);
+      ctx.clip();
 
-      // X-Axis (Ca) Ticks
-      for (let i = 0; i <= 4; i++) {
-        const v = caMin + (i / 4) * (caMax - caMin);
-        const x = mapCaToX(v);
-        ctx.beginPath();
-        ctx.moveTo(x, padding.top);
-        ctx.lineTo(x, padding.top + plotH);
-        ctx.stroke();
-        ctx.textAlign = "center";
-        ctx.fillText(v.toFixed(2), x, padding.top + plotH + 14);
-      }
-
-      // Y-Axis (T) Ticks
-      for (let i = 0; i <= 4; i++) {
-        const v = tMin + (i / 4) * (tMax - tMin);
-        const y = mapTempToY(v);
-        ctx.beginPath();
-        ctx.moveTo(padding.left, y);
-        ctx.lineTo(padding.left + plotW, y);
-        ctx.stroke();
-        ctx.textAlign = "right";
-        ctx.fillText(`${Math.round(v)}K`, padding.left - 6, y + 3);
-      }
-
-      // Emergency Shutdown Threshold Line
-      if (tripTemp >= tMin && tripTemp <= tMax) {
-        const tripY = mapTempToY(tripTemp);
-        ctx.setLineDash([4, 4]);
-        ctx.strokeStyle = "#ff5548";
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        ctx.moveTo(padding.left, tripY);
-        ctx.lineTo(padding.left + plotW, tripY);
-        ctx.stroke();
-        ctx.setLineDash([]);
-      }
-
-      // --- 4. THEORETICAL NULLCLINES ---
-      const currentTc = getTc();
+      // --- 6. THEORETICAL NULLCLINES ---
+      const currentTc = getTc ? getTc() : 300;
       const currentTf = getTf ? getTf() : ((defaultParams as any).Tf ?? 350);
       
+      // Robust parameter fallbacks in case of missing simulation exports
       const F = (defaultParams as any).F ?? 100;
       const V = (defaultParams as any).V ?? 100;
       const Caf = (defaultParams as any).Caf ?? 1.0;
@@ -133,67 +107,55 @@ export function PhasePortraitChart({
       const rho = (defaultParams as any).rho ?? 1000;
       const Cp = (defaultParams as any).Cp ?? 4.18;
       const rhoCp = (defaultParams as any).rhoCp ?? (rho * Cp);
-      const k0 = defaultParams.k0;
-      const Ea = defaultParams.Ea;
-      const dHr = defaultParams.dHr;
-      const UA = defaultParams.UA;
+      const k0 = (defaultParams as any).k0 ?? 7.2e10;
+      const Ea = (defaultParams as any).Ea ?? 72750;
+      const dHr = (defaultParams as any).dHr ?? -50000;
+      const UA = (defaultParams as any).UA ?? 50000;
       const tau = V / F;
 
       ctx.lineWidth = 1.5;
       ctx.setLineDash([4, 4]);
 
-      // A. Concentration Nullcline (dCa/dt = 0)
+      // A. Concentration Nullcline (Purple)
       ctx.beginPath();
-      ctx.strokeStyle = "rgba(167, 139, 250, 0.6)"; // Purple
-      let startedCa = false;
-      for (let T = tMin; T <= tMax; T += 2) {
+      ctx.strokeStyle = "rgba(167, 139, 250, 0.7)"; 
+      for (let T = tMin - 10; T <= tMax + 10; T += 2) {
         const k1 = k0 * Math.exp(-Ea / (R * T));
         const Ca_null = Caf / (1 + k1 * tau);
         const x = mapCaToX(Ca_null);
         const y = mapTempToY(T);
-        if (!startedCa) { ctx.moveTo(x, y); startedCa = true; }
-        else { ctx.lineTo(x, y); }
+        if (T === tMin - 10) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
       }
       ctx.stroke();
 
-      // B. Thermal Nullcline (dT/dt = 0)
+      // B. Thermal Nullcline (Orange)
       ctx.beginPath();
-      ctx.strokeStyle = "rgba(251, 146, 60, 0.6)"; // Orange
-      let startedT = false;
-      for (let T = tMin; T <= tMax; T += 2) {
+      ctx.strokeStyle = "rgba(251, 146, 60, 0.7)";
+      for (let T = tMin - 10; T <= tMax + 10; T += 2) {
         const k1 = k0 * Math.exp(-Ea / (R * T));
         let heatGenFactor = (Math.abs(dHr) / rhoCp) * k1;
         
         if ((defaultParams as any).k02 && (defaultParams as any).Ea2) {
           const k2 = (defaultParams as any).k02 * Math.exp(-(defaultParams as any).Ea2 / (R * T));
-          heatGenFactor += (Math.abs((defaultParams as any).dHr2) / rhoCp) * k2 * (k1 / (1 / tau + k2));
+          const dHr2 = (defaultParams as any).dHr2 ?? -20000;
+          heatGenFactor += (Math.abs(dHr2) / rhoCp) * k2 * (k1 / (1 / tau + k2));
         }
         
         const heatRemoval = (T - currentTf) / tau + (UA / (rhoCp * V)) * (T - currentTc);
         
         if (heatGenFactor > 1e-10) {
           const Ca_null = heatRemoval / heatGenFactor;
-          if (Ca_null >= -0.2 && Ca_null <= caMax + 0.2) {
-            const x = mapCaToX(Ca_null);
-            const y = mapTempToY(T);
-            if (!startedT) { ctx.moveTo(x, y); startedT = true; }
-            else { ctx.lineTo(x, y); }
-          } else {
-            startedT = false;
-          }
+          const x = mapCaToX(Ca_null);
+          const y = mapTempToY(T);
+          if (T === tMin - 10) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
         }
       }
       ctx.stroke();
       ctx.setLineDash([]);
-
-      // Legend
-      ctx.textAlign = "right";
-      ctx.fillStyle = "rgba(167, 139, 250, 0.9)";
-      ctx.fillText("dCa/dt = 0", padding.left + plotW - 5, padding.top + 5);
-      ctx.fillStyle = "rgba(251, 146, 60, 0.9)";
-      ctx.fillText("dT/dt = 0", padding.left + plotW - 5, padding.top + 18);
-
-      // --- 5. Draw Live Trajectory Trail ---
+      
+      // --- 7. LIVE TRAJECTORY TRAIL ---
       const count = filled.current;
       if (count > 1) {
         const startIdx = writeIndex.current - count;
@@ -225,16 +187,65 @@ export function PhasePortraitChart({
 
         ctx.beginPath();
         ctx.arc(cx, cy, 4, 0, Math.PI * 2);
-        ctx.fillStyle = currentT >= tripTemp ? "#ff5548" : "#38bdf8";
+        ctx.fillStyle = (tripTemp && currentT >= tripTemp) ? "#ff5548" : "#38bdf8";
         ctx.fill();
       }
+
+      ctx.restore(); // Remove clipping mask so axes can draw outside the plot area
+
+      // 8. Grid Lines & Axes Overlays
+      ctx.strokeStyle = "#1f2733";
+      ctx.lineWidth = 1;
+      ctx.fillStyle = "#5b6577";
+      ctx.font = "10px monospace";
+
+      for (let i = 0; i <= 4; i++) {
+        const v = caMin + (i / 4) * (caMax - caMin);
+        const x = mapCaToX(v);
+        ctx.beginPath();
+        ctx.moveTo(x, padding.top);
+        ctx.lineTo(x, padding.top + plotH);
+        ctx.stroke();
+        ctx.textAlign = "center";
+        ctx.fillText(v.toFixed(2), x, padding.top + plotH + 14);
+      }
+
+      for (let i = 0; i <= 4; i++) {
+        const v = tMin + (i / 4) * (tMax - tMin);
+        const y = mapTempToY(v);
+        ctx.beginPath();
+        ctx.moveTo(padding.left, y);
+        ctx.lineTo(padding.left + plotW, y);
+        ctx.stroke();
+        ctx.textAlign = "right";
+        ctx.fillText(`${Math.round(v)}K`, padding.left - 6, y + 3);
+      }
+
+      if (tripTemp && tripTemp >= tMin && tripTemp <= tMax) {
+        const tripY = mapTempToY(tripTemp);
+        ctx.setLineDash([4, 4]);
+        ctx.strokeStyle = "#ff5548";
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(padding.left, tripY);
+        ctx.lineTo(padding.left + plotW, tripY);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+
+      // Legend
+      ctx.textAlign = "right";
+      ctx.fillStyle = "rgba(167, 139, 250, 0.9)";
+      ctx.fillText("dCa/dt = 0", padding.left + plotW - 5, padding.top + 5);
+      ctx.fillStyle = "rgba(251, 146, 60, 0.9)";
+      ctx.fillText("dT/dt = 0", padding.left + plotW - 5, padding.top + 18);
 
       rafRef.current = requestAnimationFrame(draw);
     };
 
     rafRef.current = requestAnimationFrame(draw);
     return () => cancelAnimationFrame(rafRef.current);
-  }, [getCa, getT, getTc, getTf, caMin, caMax, tMin, tMax, tripTemp, trailLength]);
+  }, [caMin, caMax, tMin, tMax, tripTemp, trailLength]); // Removed getters from dependency array
 
   return (
     <div style={{ width: "100%" }}>
