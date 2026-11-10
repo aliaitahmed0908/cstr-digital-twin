@@ -626,4 +626,274 @@ export default function App() {
                   min={-50}
                   max={50}
                   step={1}
-                  value={sensitivity
+                  value={sensitivityPct}
+                  onChange={(e) => handleSensitivityPctChange(parseFloat(e.target.value))}
+                />
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "#5b6577", marginTop: 6 }}>
+                  <span>-50%</span>
+                  <span>nominal</span>
+                  <span>+50%</span>
+                </div>
+                <div className="mono" style={{ fontSize: 10.5, color: "#5b6577", marginTop: 8 }}>
+                  {SENSITIVITY_LABELS[sensitivityKey]}: {defaultParams[sensitivityKey].toExponential(3)} → {(defaultParams[sensitivityKey] * (1 + sensitivityPct / 100)).toExponential(3)}
+                </div>
+                <button
+                  onClick={handleSensitivityReset}
+                  style={{
+                    marginTop: 10,
+                    padding: "5px 12px",
+                    borderRadius: 6,
+                    border: "1px solid #1f2733",
+                    background: "transparent",
+                    color: "#8a94a6",
+                    fontSize: 11.5,
+                    cursor: "pointer",
+                  }}
+                >
+                  Reset to Nominal
+                </button>
+              </>
+            )}
+            {!sensitivityKey && (
+              <div style={{ fontSize: 11, color: "#5b6577" }}>
+                Pick a parameter to explore how the reactor responds to model uncertainty, e.g. fouling (UA↓) or catalyst deactivation (k0↓).
+              </div>
+            )}
+          </Card>
+
+          <Card>
+            <SectionLabel>Sustained Disturbances</SectionLabel>
+            <ToggleRow
+              label="Feed Temp Fault"
+              detail={tfDisturbance ? "Tf = 390.0 K (+40)" : "Tf = 350.0 K (nominal)"}
+              checked={tfDisturbance}
+              onChange={toggleTfDisturbance}
+              accentColor="#ff6b52"
+            />
+            <div style={{ height: 10 }} />
+            <ToggleRow
+              label="Feed Flow Fault"
+              detail={flowDisturbance ? "F = 140.0 L/min (+40)" : "F = 100.0 L/min (nominal)"}
+              checked={flowDisturbance}
+              onChange={toggleFlowDisturbance}
+              accentColor="#3ba8ff"
+            />
+          </Card>
+
+          <Card>
+            <SectionLabel>Temperature Control</SectionLabel>
+
+            {controlsLocked && (
+              <div
+                style={{
+                  fontSize: 11.5,
+                  color: "#ff5548",
+                  fontWeight: 700,
+                  marginBottom: 12,
+                  padding: "8px 10px",
+                  background: "rgba(255,85,72,0.08)",
+                  border: "1px solid rgba(255,85,72,0.3)",
+                  borderRadius: 8,
+                }}
+              >
+                {faulted
+                  ? "Numerical fault — use Reset Reactor above to recover"
+                  : "ESD latched — use Acknowledge & Resume above once T ≤ 415 K"}
+              </div>
+            )}
+
+            <ToggleRow
+              label={autoMode ? "Auto (PI Control)" : "Manual"}
+              detail={autoMode ? "Controller is adjusting Tc" : "You are adjusting Tc"}
+              checked={autoMode}
+              onChange={() => !controlsLocked && setAutoMode((v) => !v)}
+              accentColor="#a78bfa"
+            />
+
+            {autoMode && (
+              <div style={{ marginTop: 14 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 8 }}>
+                  <span style={{ fontSize: 12.5, color: "#8a94a6" }}>Setpoint T</span>
+                  <span className="mono" style={{ fontSize: 18, fontWeight: 700, color: "#a78bfa" }}>
+                    {setpoint.toFixed(1)} K
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  className="thermo-slider"
+                  min={280}
+                  max={420}
+                  step={0.5}
+                  value={setpoint}
+                  disabled={controlsLocked}
+                  onChange={(e) => setSetpoint(parseFloat(e.target.value))}
+                />
+              </div>
+            )}
+
+            <div style={{ height: 1, background: "#1f2733", margin: "14px 0" }} />
+
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 10 }}>
+              <span style={{ fontSize: 12.5, color: "#8a94a6" }}>
+                {autoMode ? "Tc (controller output)" : "Setpoint Tc"}
+              </span>
+              <span className="mono" style={{ fontSize: 20, fontWeight: 700 }}>
+                {tc.toFixed(1)} K
+              </span>
+            </div>
+            <input
+              type="range"
+              className="thermo-slider"
+              min={250}
+              max={450}
+              step={0.5}
+              value={tc}
+              disabled={autoMode || controlsLocked}
+              onChange={(e) => handleTcChange(parseFloat(e.target.value))}
+              style={autoMode || controlsLocked ? { opacity: 0.4, cursor: "not-allowed" } : undefined}
+            />
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "#5b6577", marginTop: 6 }}>
+              <span>250 K · cold</span>
+              <span>450 K · hot</span>
+            </div>
+
+            <div style={{ height: 1, background: "#1f2733", margin: "14px 0" }} />
+
+            <ToggleRow
+              label="Cutaway View"
+              detail={cutawayOn ? "Vessel sliced open" : "Solid vessel"}
+              checked={cutawayOn}
+              onChange={() => setCutawayOn((v) => !v)}
+              accentColor="#3ba8ff"
+            />
+          </Card>
+        </div>
+
+        <div style={{ flex: 1, position: "relative" }}>
+          <Canvas
+            camera={{ position: [4.5, 2.8, 4.5], fov: 42 }}
+            shadows
+            onCreated={({ gl }) => {
+              gl.localClippingEnabled = true;
+            }}
+          >
+            <color attach="background" args={["#05070a"]} />
+            <fog attach="fog" args={["#05070a", 8, 18]} />
+            <ReactorMesh
+              getTemperature={() => liveTempRef.current}
+              getCoolingTemp={() => tc}
+              coldTemp={300}
+              hotTemp={450}
+              cutawayEnabled={cutawayOn}
+            />
+            <ContactShadows position={[0, -1.6, 0]} opacity={0.4} scale={10} blur={2.5} far={4} />
+            <Grid
+              position={[0, -1.6, 0]}
+              args={[20, 20]}
+              cellColor="#161d29"
+              sectionColor="#212c3f"
+              fadeDistance={12}
+              infiniteGrid
+            />
+            <Environment preset="warehouse" />
+            <OrbitControls enableDamping dampingFactor={0.08} minDistance={3} maxDistance={10} />
+          </Canvas>
+
+          <div
+            style={{
+              position: "absolute",
+              top: 16,
+              right: 16,
+              padding: "8px 14px",
+              borderRadius: 8,
+              background: "rgba(13,17,25,0.7)",
+              backdropFilter: "blur(6px)",
+              border: esdActive || faulted ? "1px solid #ff5548" : "1px solid #1f2733",
+              fontSize: 12,
+              color: "#c3cad6",
+            }}
+          >
+            T = <span className="mono" style={{ color: stateColor, fontWeight: 700 }}>{telemetry.T.toFixed(1)} K</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ToggleRow({
+  label,
+  detail,
+  checked,
+  onChange,
+  accentColor,
+}: {
+  label: string;
+  detail: string;
+  checked: boolean;
+  onChange: () => void;
+  accentColor: string;
+}) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+      <div>
+        <div style={{ fontSize: 12.5, fontWeight: 600, color: "#eef1f6" }}>{label}</div>
+        <div className="mono" style={{ fontSize: 10.5, color: checked ? accentColor : "#5b6577", marginTop: 2 }}>
+          {detail}
+        </div>
+      </div>
+      <label className="toggle-switch">
+        <input type="checkbox" checked={checked} onChange={onChange} />
+        <span
+          className="toggle-slider"
+          style={checked ? { background: `${accentColor}55`, borderColor: accentColor } : undefined}
+        />
+      </label>
+    </div>
+  );
+}
+
+function Card({ children, subtle = false }: { children: React.ReactNode; subtle?: boolean }) {
+  return (
+    <div
+      className="fade-in"
+      style={{
+        padding: 13,
+        borderRadius: 12,
+        background: subtle ? "transparent" : "#0f1420",
+        border: subtle ? "1px dashed #232c3a" : "1px solid #1f2733",
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
+function SectionLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <div style={{ fontSize: 11, letterSpacing: 0.6, textTransform: "uppercase", color: "#5b6577", marginBottom: 12, fontWeight: 600 }}>
+      {children}
+    </div>
+  );
+}
+
+function Metric({
+  label,
+  value,
+  valueColor = "#eef1f6",
+  mono = false,
+}: {
+  label: string;
+  value: string;
+  valueColor?: string;
+  mono?: boolean;
+}) {
+  return (
+    <div style={{ display: "flex", justifyContent: "space-between", padding: "5px 0" }}>
+      <span style={{ fontSize: 12.5, color: "#8a94a6" }}>{label}</span>
+      <span className={mono ? "mono" : ""} style={{ fontSize: 13, fontWeight: 600, color: valueColor }}>
+        {value}
+      </span>
+    </div>
+  );
+}

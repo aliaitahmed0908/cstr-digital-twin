@@ -35,7 +35,7 @@ export function PhasePortraitChart({
   const lastSampleTime = useRef(0);
   const rafRef = useRef<number>(0);
 
-  // ISOLATE GETTERS FROM REACT RENDER CYCLE (Fixes the UI Freeze & Cutaway button)
+  // ISOLATE GETTERS FROM REACT RENDER CYCLE
   const getters = useRef({ getCa, getT, getTc, getTf });
   useEffect(() => {
     getters.current = { getCa, getT, getTc, getTf };
@@ -88,27 +88,27 @@ export function PhasePortraitChart({
       ctx.fillStyle = "#0a0d13";
       ctx.fillRect(0, 0, w, h);
 
-      // CLIPPING MASK FOR DATA CURVES (Prevents infinite math from breaking canvas)
+      // CLIPPING MASK FOR DATA CURVES
       ctx.save();
       ctx.beginPath();
       ctx.rect(padding.left, padding.top, plotW, plotH);
       ctx.clip();
 
-      // THEORETICAL NULLCLINES
+      // THEORETICAL NULLCLINES (Strictly Typed)
       const currentTc = getTc ? getTc() : 300;
-      const currentTf = getTf ? getTf() : ((defaultParams as any).Tf ?? 350);
+      const currentTf = getTf ? getTf() : (defaultParams.Tf ?? 350);
       
-      const F = (defaultParams as any).F ?? 100;
-      const V = (defaultParams as any).V ?? 100;
-      const Caf = (defaultParams as any).Caf ?? 1.0;
-      const R = (defaultParams as any).R ?? 8.314;
-      const rho = (defaultParams as any).rho ?? 1000;
-      const Cp = (defaultParams as any).Cp ?? 4.18;
-      const rhoCp = (defaultParams as any).rhoCp ?? (rho * Cp);
-      const k0 = (defaultParams as any).k0 ?? 7.2e10;
-      const Ea = (defaultParams as any).Ea ?? 72750;
-      const dHr = (defaultParams as any).dHr ?? -50000;
-      const UA = (defaultParams as any).UA ?? 50000;
+      const F = defaultParams.F ?? 100;
+      const V = defaultParams.V ?? 100;
+      const Caf = defaultParams.Caf ?? 1.0;
+      const R = defaultParams.R ?? 8.314;
+      const rho = defaultParams.rho ?? 1000;
+      const Cp = defaultParams.Cp ?? 4.18;
+      const rhoCp = rho * Cp;
+      const k0 = defaultParams.k0 ?? 7.2e10;
+      const Ea = defaultParams.Ea ?? 72750;
+      const dHr = defaultParams.dHr ?? -50000;
+      const UA = defaultParams.UA ?? 50000;
       const tau = V / F;
 
       ctx.lineWidth = 1.5;
@@ -134,9 +134,9 @@ export function PhasePortraitChart({
         const k1 = k0 * Math.exp(-Ea / (R * T));
         let heatGenFactor = (Math.abs(dHr) / rhoCp) * k1;
         
-        if ((defaultParams as any).k02 && (defaultParams as any).Ea2) {
-          const k2 = (defaultParams as any).k02 * Math.exp(-(defaultParams as any).Ea2 / (R * T));
-          const dHr2 = (defaultParams as any).dHr2 ?? -20000;
+        if (defaultParams.k02 !== undefined && defaultParams.Ea2 !== undefined) {
+          const k2 = defaultParams.k02 * Math.exp(-defaultParams.Ea2 / (R * T));
+          const dHr2 = defaultParams.dHr2 ?? -20000;
           heatGenFactor += (Math.abs(dHr2) / rhoCp) * k2 * (k1 / (1 / tau + k2));
         }
         
@@ -185,7 +185,7 @@ export function PhasePortraitChart({
 
         ctx.beginPath();
         ctx.arc(cx, cy, 4, 0, Math.PI * 2);
-        ctx.fillStyle = (tripTemp && currentT >= tripTemp) ? "#ff5548" : "#38bdf8";
+        ctx.fillStyle = (tripTemp !== undefined && currentT >= tripTemp) ? "#ff5548" : "#38bdf8";
         ctx.fill();
       }
 
@@ -219,7 +219,7 @@ export function PhasePortraitChart({
         ctx.fillText(`${Math.round(v)}K`, padding.left - 6, y + 3);
       }
 
-      if (tripTemp && tripTemp >= tMin && tripTemp <= tMax) {
+      if (tripTemp !== undefined && tripTemp >= tMin && tripTemp <= tMax) {
         const tripY = mapTempToY(tripTemp);
         ctx.setLineDash([4, 4]);
         ctx.strokeStyle = "#ff5548";

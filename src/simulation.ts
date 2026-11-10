@@ -13,7 +13,6 @@ export interface ReactionRates {
   rate2: number;
 }
 
-// 1. FULL-RUN TELEMETRY INTERFACE
 export interface TelemetryRecord {
   time_min: number;
   temperature_K: number;
@@ -27,25 +26,23 @@ export interface TelemetryRecord {
 }
 
 export const defaultParams = {
-  F: 100.0,       // Feed flow rate (L/min)
-  V: 100.0,       // Reactor volume (L)
-  Caf: 1.0,       // Feed concentration of A (mol/L)
-  Tf: 350.0,      // Feed temperature (K)
-  Tc: 300.0,      // Default coolant temperature (K)
-  UA: 50000.0,    // Heat transfer coefficient (J/(min*K))
-  rho: 1000.0,    // Density (g/L)
-  Cp: 4.18,       // Heat capacity (J/(g*K))
-  R: 8.314,       // Gas constant (J/(mol*K))
+  F: 100.0,
+  V: 100.0,
+  Caf: 1.0,
+  Tf: 350.0,
+  Tc: 300.0,
+  UA: 50000.0,
+  rho: 1000.0,
+  Cp: 4.18,
+  R: 8.314,
   
-  // Main Reaction A -> B (Desired)
-  k0: 7.2e10,     // Pre-exponential factor (1/min)
-  Ea: 72750.0,    // Activation energy (J/mol)
-  dHr: -50000.0,  // Heat of reaction (J/mol)
+  k0: 7.2e10,
+  Ea: 72750.0,
+  dHr: -50000.0,
   
-  // Side Reaction B -> C (Undesired extension)
-  k02: 2.0e10,    // Pre-exponential factor (1/min)
-  Ea2: 80000.0,   // Activation energy (J/mol)
-  dHr2: -30000.0, // Heat of reaction (J/mol)
+  k02: 2.0e10,
+  Ea2: 80000.0,
+  dHr2: -30000.0,
 };
 
 export class PIController {
@@ -70,7 +67,6 @@ export class PIController {
     const error = setpoint - pv;
     const pTerm = this.Kp * error;
     
-    // Direction-aware anti-windup
     let tentativeOut = pTerm + this.Ki * (this.integral + error * dt);
     if (tentativeOut > this.outMax) {
       if (error < 0) this.integral += error * dt;
@@ -96,7 +92,6 @@ export class CSTREngine {
   private esdLatched = false;
   private faulted = false;
   
-  // 2. FULL-RUN HISTORY BUFFER
   private history: TelemetryRecord[] = [];
 
   constructor(Ca0: number, T0: number, initialParams = defaultParams) {
@@ -113,7 +108,6 @@ export class CSTREngine {
     this.faulted = false;
     this.history = [];
     
-    // Log the exact t=0 initial state immediately
     this.recordHistoryStep();
   }
 
@@ -121,9 +115,8 @@ export class CSTREngine {
     return this.history;
   }
 
-  // 3. TELEMETRY RECORDER LOGIC
   private recordHistoryStep(): void {
-    if (this.faulted) return; // Do not log NaN/Inf during numerical blowups
+    if (this.faulted) return;
 
     const { Ca, Cb, T } = this.state;
     const Caf = this.params.Caf;
@@ -132,8 +125,6 @@ export class CSTREngine {
     const totalConverted = Caf - Ca;
     const selectivity = totalConverted > 1e-6 ? (Cb / totalConverted) * 100 : 100;
     
-    // Qcool = UA * (T - Tc). Physical convention: positive value means heat LEAVES the reactor.
-    // We use the live applied Tc, which correctly reflects any forced 250K ESD overrides.
     const Qcool = this.params.UA * (T - this.Tc);
 
     this.history.push({
@@ -204,18 +195,15 @@ export class CSTREngine {
   private getDerivatives(Ca: number, Cb: number, T: number) {
     const { F, V, Caf, Tf, rho, Cp, R, k0, Ea, dHr, k02, Ea2, dHr2, UA } = this.params;
     
-    // Kinetics
     const k1 = k0 * Math.exp(-Ea / (R * T));
     const k2 = k02 * Math.exp(-Ea2 / (R * T));
     
     const rate1 = k1 * Ca;
     const rate2 = k2 * Cb;
     
-    // Mass balances
     const dCa = (F / V) * (Caf - Ca) - rate1;
     const dCb = (F / V) * (0 - Cb) + rate1 - rate2;
     
-    // Energy balance terms (K/min)
     const rhoCp = rho * Cp;
     const feed = (F / V) * (Tf - T);
     const mainRxn = (Math.abs(dHr) / rhoCp) * rate1;
@@ -247,21 +235,19 @@ export class CSTREngine {
     };
   }
 
-  // 4. SOLVER INTEGRATION LOOP
   public advanceRealTime(dtSeconds: number, simMinutesPerSecond: number, substeps: number): void {
     if (this.faulted) return;
     
     const dtSimMinutes = dtSeconds * simMinutesPerSecond;
-    if (dtSimMinutes <= 0) return; // Prevent logging identical rows while paused
+    if (dtSimMinutes <= 0) return;
     
     const dtStep = dtSimMinutes / substeps;
 
     for (let i = 0; i < substeps; i++) {
       this.step(dtStep);
       
-      if (this.faulted) break; // Freeze state and abort logging on NaN
+      if (this.faulted) break;
       
-      // Log exactly one row per accepted solver step
       this.recordHistoryStep();
     }
   }
@@ -269,7 +255,6 @@ export class CSTREngine {
   private step(dt: number) {
     const { Ca, Cb, T } = this.state;
 
-    // Runge-Kutta 4th Order Integration
     const k1 = this.getDerivatives(Ca, Cb, T);
     const k2 = this.getDerivatives(Ca + 0.5 * dt * k1.dCa, Cb + 0.5 * dt * k1.dCb, T + 0.5 * dt * k1.dT);
     const k3 = this.getDerivatives(Ca + 0.5 * dt * k2.dCa, Cb + 0.5 * dt * k2.dCb, T + 0.5 * dt * k2.dT);
@@ -279,7 +264,6 @@ export class CSTREngine {
     const nextCb = Cb + (dt / 6) * (k1.dCb + 2 * k2.dCb + 2 * k3.dCb + k4.dCb);
     const nextT = T + (dt / 6) * (k1.dT + 2 * k2.dT + 2 * k3.dT + k4.dT);
 
-    // Safeguard check
     if (!Number.isFinite(nextCa) || !Number.isFinite(nextCb) || !Number.isFinite(nextT)) {
       this.faulted = true;
       return;
@@ -287,14 +271,13 @@ export class CSTREngine {
 
     this.state.Ca = Math.max(0, nextCa);
     this.state.Cb = Math.max(0, nextCb);
-    this.state.T = Math.max(200, Math.min(700, nextT)); // Hard physical bounds
+    this.state.T = Math.max(200, Math.min(700, nextT));
 
-    // Emergency Shutdown (ESD) Latch Logic
     if (this.state.T >= 440.0) {
       this.esdLatched = true;
     }
     if (this.esdLatched) {
-      this.Tc = 250.0; // Force max cooling override
+      this.Tc = 250.0;
     }
 
     this.time += dt;
