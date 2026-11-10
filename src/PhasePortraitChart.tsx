@@ -43,6 +43,7 @@ export function PhasePortraitChart({
       
       ctx.clearRect(0, 0, width, height);
 
+      // Background grid & axes
       ctx.strokeStyle = "#1f2733";
       ctx.lineWidth = 1;
       ctx.beginPath();
@@ -66,6 +67,7 @@ export function PhasePortraitChart({
       const toX = (ca: number) => ((ca - caMin) / (caMax - caMin)) * width;
       const toY = (t: number) => height - ((t - tMin) / (tMax - tMin)) * height;
 
+      // Model parameters for nullcline calculations
       const Caf = 1.0;
       const rho = 1000.0;
       const Cp = 4.18;
@@ -75,32 +77,39 @@ export function PhasePortraitChart({
       const dHr = -50000.0;
       const UA = 50000.0;
       const rhoCp = rho * Cp;
-      const dilution = F / V;
+      const dilution = Math.max(1e-4, F / Math.max(1.0, V));
 
-      // Draw Ca Nullcline (dCa/dt = 0) -> Purple curve
+      // Draw Ca Nullcline (dCa/dt = 0) -> Purple curve with finite safety guards
       ctx.strokeStyle = "#a78bfa";
       ctx.lineWidth = 2;
       ctx.beginPath();
       let firstCa = true;
       for (let px = 0; px <= width; px += 2) {
         const ca = caMin + (px / width) * (caMax - caMin);
-        const k1 = (dilution * Math.max(1e-6, Caf - ca)) / Math.max(1e-6, ca);
+        if (ca <= 0 || ca >= Caf) continue;
+
+        const k1 = (dilution * (Caf - ca)) / ca;
         if (k1 > 0 && k1 < k0) {
-          const T = -Ea / (R * Math.log(k1 / k0));
-          if (T >= tMin && T <= tMax) {
-            const py = toY(T);
-            if (firstCa) {
-              ctx.moveTo(px, py);
-              firstCa = false;
-            } else {
-              ctx.lineTo(px, py);
+          const logVal = Math.log(k1 / k0);
+          if (Number.isFinite(logVal) && logVal !== 0) {
+            const T = -Ea / (R * logVal);
+            if (Number.isFinite(T) && T >= tMin && T <= tMax) {
+              const py = toY(T);
+              if (Number.isFinite(py)) {
+                if (firstCa) {
+                  ctx.moveTo(px, py);
+                  firstCa = false;
+                } else {
+                  ctx.lineTo(px, py);
+                }
+              }
             }
           }
         }
       }
       ctx.stroke();
 
-      // Draw T Nullcline (dT/dt = 0) -> Orange curve
+      // Draw T Nullcline (dT/dt = 0) -> Orange curve with finite safety guards
       ctx.strokeStyle = "#ffb545";
       ctx.lineWidth = 2;
       ctx.beginPath();
@@ -109,37 +118,50 @@ export function PhasePortraitChart({
         const ca = caMin + (px / width) * (caMax - caMin);
         let bestT = tMin;
         let minDiff = Infinity;
-        for (let T_test = tMin; T_test <= tMax; T_test += 0.5) {
-          const k1 = k0 * Math.exp(-Ea / (R * T_test));
+        
+        for (let T_test = tMin; T_test <= tMax; T_test += 1.0) {
+          const expTerm = Math.exp(-Ea / (R * T_test));
+          if (!Number.isFinite(expTerm)) continue;
+
+          const k1 = k0 * expTerm;
           const heatGen = (Math.abs(dHr) / rhoCp) * k1 * ca;
-          const heatRem = dilution * (T_test - tf) + (UA / (rhoCp * V)) * (T_test - tc);
+          const heatRem = dilution * (T_test - tf) + (UA / (rhoCp * Math.max(1.0, V))) * (T_test - tc);
           const diff = Math.abs(heatGen - heatRem);
-          if (diff < minDiff) {
+          
+          if (Number.isFinite(diff) && diff < minDiff) {
             minDiff = diff;
             bestT = T_test;
           }
         }
-        if (minDiff < 5.0) {
+
+        if (minDiff < 15.0) {
           const py = toY(bestT);
-          if (firstT) {
-            ctx.moveTo(px, py);
-            firstT = false;
-          } else {
-            ctx.lineTo(px, py);
+          if (Number.isFinite(py)) {
+            if (firstT) {
+              ctx.moveTo(px, py);
+              firstT = false;
+            } else {
+              ctx.lineTo(px, py);
+            }
           }
         }
       }
       ctx.stroke();
 
-      const dotX = toX(currentCa);
-      const dotY = toY(currentT);
-      ctx.fillStyle = currentT >= tripTemp ? "#ff5548" : "#34d399";
-      ctx.beginPath();
-      ctx.arc(dotX, dotY, 6, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.strokeStyle = "#ffffff";
-      ctx.lineWidth = 2;
-      ctx.stroke();
+      // Draw current state operating point dot with safety checks
+      if (Number.isFinite(currentCa) && Number.isFinite(currentT)) {
+        const dotX = toX(currentCa);
+        const dotY = toY(currentT);
+        if (Number.isFinite(dotX) && Number.isFinite(dotY)) {
+          ctx.fillStyle = currentT >= tripTemp ? "#ff5548" : "#34d399";
+          ctx.beginPath();
+          ctx.arc(dotX, dotY, 6, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.strokeStyle = "#ffffff";
+          ctx.lineWidth = 2;
+          ctx.stroke();
+        }
+      }
 
       animId = requestAnimationFrame(render);
     };
