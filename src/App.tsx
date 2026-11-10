@@ -35,8 +35,14 @@ export default function App() {
   const [telemetry, setTelemetry] = useState({ Ca: 0.5, Cb: 0, T: 350, simTime: 0 });
   const [recordStats, setRecordStats] = useState({ count: 0, duration: 0 });
   const [tc, setTc] = useState(defaultParams.Tc);
+  
+  // Disturbances & Faults
   const [tfDisturbance, setTfDisturbance] = useState(false);
   const [flowDisturbance, setFlowDisturbance] = useState(false);
+  const [uaFault, setUaFault] = useState(false);
+  const [agitatorFault, setAgitatorFault] = useState(false);
+  const [cafFault, setCafFault] = useState(false);
+
   const [autoMode, setAutoMode] = useState(false);
   const [setpoint, setSetpoint] = useState(330);
   const [activePreset, setActivePreset] = useState<PresetKey | null>(null);
@@ -136,6 +142,24 @@ export default function App() {
     engineRef.current.setDisturbance("F", next);
   };
 
+  const toggleUaFault = () => {
+    const next = !uaFault;
+    setUaFault(next);
+    engineRef.current.setFault("ua", next);
+  };
+
+  const toggleAgitatorFault = () => {
+    const next = !agitatorFault;
+    setAgitatorFault(next);
+    engineRef.current.setFault("agitator", next);
+  };
+
+  const toggleCafFault = () => {
+    const next = !cafFault;
+    setCafFault(next);
+    engineRef.current.setFault("caf", next);
+  };
+
   const stopPreset = () => {
     clearPresetTimeouts();
     setActivePreset(null);
@@ -147,8 +171,14 @@ export default function App() {
     setAutoMode(false);
     setTfDisturbance(false);
     setFlowDisturbance(false);
+    setUaFault(false);
+    setAgitatorFault(false);
+    setCafFault(false);
     engineRef.current.setDisturbance("Tf", false);
     engineRef.current.setDisturbance("F", false);
+    engineRef.current.setFault("ua", false);
+    engineRef.current.setFault("agitator", false);
+    engineRef.current.setFault("caf", false);
     engineRef.current.resetState(0.5, 350);
     engineRef.current.setTc(300);
     setTc(300);
@@ -206,8 +236,14 @@ export default function App() {
       setAutoMode(false);
       setTfDisturbance(false);
       setFlowDisturbance(false);
+      setUaFault(false);
+      setAgitatorFault(false);
+      setCafFault(false);
       engineRef.current.setDisturbance("Tf", false);
       engineRef.current.setDisturbance("F", false);
+      engineRef.current.setFault("ua", false);
+      engineRef.current.setFault("agitator", false);
+      engineRef.current.setFault("caf", false);
       engineRef.current.resetState(1.0, 300);
       engineRef.current.setTc(300);
       setTc(300);
@@ -217,8 +253,14 @@ export default function App() {
       setAutoMode(false);
       setTfDisturbance(false);
       setFlowDisturbance(false);
+      setUaFault(false);
+      setAgitatorFault(false);
+      setCafFault(false);
       engineRef.current.setDisturbance("Tf", false);
       engineRef.current.setDisturbance("F", false);
+      engineRef.current.setFault("ua", false);
+      engineRef.current.setFault("agitator", false);
+      engineRef.current.setFault("caf", false);
       engineRef.current.resetState(0.5, 350);
       engineRef.current.setTc(420);
       setTc(420);
@@ -227,8 +269,14 @@ export default function App() {
     if (key === "rejection") {
       setTfDisturbance(false);
       setFlowDisturbance(false);
+      setUaFault(false);
+      setAgitatorFault(false);
+      setCafFault(false);
       engineRef.current.setDisturbance("Tf", false);
       engineRef.current.setDisturbance("F", false);
+      engineRef.current.setFault("ua", false);
+      engineRef.current.setFault("agitator", false);
+      engineRef.current.setFault("caf", false);
       engineRef.current.resetState(0.5, 330);
       setSetpoint(330);
       setAutoMode(true);
@@ -291,7 +339,7 @@ export default function App() {
     URL.revokeObjectURL(url);
   };
 
-  const anyDisturbanceActive = tfDisturbance || flowDisturbance;
+  const anyDisturbanceActive = tfDisturbance || flowDisturbance || uaFault || agitatorFault || cafFault;
 
   const thermalState =
     telemetry.T > 400 ? "RUNAWAY RISK" : telemetry.T > 370 ? "ELEVATED" : "NOMINAL";
@@ -363,7 +411,7 @@ export default function App() {
           {anyDisturbanceActive && (
             <div style={{ display: "flex", alignItems: "center", fontSize: 11.5, color: "#ffb545" }}>
               <span className="status-dot" style={{ background: "#ffb545" }} />
-              DISTURBANCE ACTIVE
+              FAULT / DISTURBANCE ACTIVE
             </div>
           )}
           <div style={{ display: "flex", alignItems: "center", fontSize: 12.5, color: "#8a94a6" }}>
@@ -659,6 +707,33 @@ export default function App() {
                 Pick a parameter to explore how the reactor responds to model uncertainty, e.g. fouling (UA↓) or catalyst deactivation (k0↓).
               </div>
             )}
+          </Card>
+
+          <Card>
+            <SectionLabel>Fault Injection Sandbox</SectionLabel>
+            <ToggleRow
+              label="Coolant Pump Failure"
+              detail={uaFault ? "UA collapsed (near 0)" : "Nominal heat transfer"}
+              checked={uaFault}
+              onChange={toggleUaFault}
+              accentColor="#ff5548"
+            />
+            <div style={{ height: 10 }} />
+            <ToggleRow
+              label="Agitator Motor Trip"
+              detail={agitatorFault ? "Mixing severely impaired" : "Normal agitation"}
+              checked={agitatorFault}
+              onChange={toggleAgitatorFault}
+              accentColor="#ffb545"
+            />
+            <div style={{ height: 10 }} />
+            <ToggleRow
+              label="Feed Concentration Spike"
+              detail={cafFault ? "Caf = 2.5 mol/L (surge)" : "Caf = 1.0 mol/L (nominal)"}
+              checked={cafFault}
+              onChange={toggleCafFault}
+              accentColor="#3ba8ff"
+            />
           </Card>
 
           <Card>

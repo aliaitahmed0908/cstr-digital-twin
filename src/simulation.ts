@@ -92,6 +92,11 @@ export class CSTREngine {
   private esdLatched = false;
   private faulted = false;
   
+  // Fault injection states
+  private uaFailed = false;
+  private agitatorTripped = false;
+  private cafSpikeActive = false;
+
   private history: TelemetryRecord[] = [];
 
   constructor(Ca0: number, T0: number, initialParams = defaultParams) {
@@ -106,6 +111,9 @@ export class CSTREngine {
     this.time = 0;
     this.esdLatched = false;
     this.faulted = false;
+    this.uaFailed = false;
+    this.agitatorTripped = false;
+    this.cafSpikeActive = false;
     this.history = [];
     
     this.recordHistoryStep();
@@ -119,13 +127,15 @@ export class CSTREngine {
     if (this.faulted) return;
 
     const { Ca, Cb, T } = this.state;
-    const Caf = this.params.Caf;
+    const effectiveCaf = this.cafSpikeActive ? this.baseParams.Caf * 2.5 : this.params.Caf;
     
-    const conversion = (1 - Ca / Caf) * 100;
-    const totalConverted = Caf - Ca;
+    const conversion = (1 - Ca / effectiveCaf) * 100;
+    const totalConverted = effectiveCaf - Ca;
     const selectivity = totalConverted > 1e-6 ? (Cb / totalConverted) * 100 : 100;
     
-    const Qcool = this.params.UA * (T - this.Tc);
+    const uaMultiplier = (this.uaFailed ? 0.02 : 1.0) * (this.agitatorTripped ? 0.15 : 1.0);
+    const effectiveUA = this.params.UA * uaMultiplier;
+    const Qcool = effectiveUA * (T - this.Tc);
 
     this.history.push({
       time_min: this.time,
@@ -152,6 +162,12 @@ export class CSTREngine {
     } else if (type === "F") {
       this.params.F = active ? this.baseParams.F + 40.0 : this.baseParams.F;
     }
+  }
+
+  public setFault(fault: "ua" | "agitator" | "caf", active: boolean): void {
+    if (fault === "ua") this.uaFailed = active;
+    if (fault === "agitator") this.agitatorTripped = active;
+    if (fault === "caf") this.cafSpikeActive = active;
   }
 
   public resetSensitivityParams(): void {
@@ -193,7 +209,8 @@ export class CSTREngine {
   }
 
   private getDerivatives(Ca: number, Cb: number, T: number) {
-    const { F, V, Caf, Tf, rho, Cp, R, k0, Ea, dHr, k02, Ea2, dHr2, UA } = this.params;
+    const { F, V, Tf, rho, Cp, R, k0, Ea, dHr, k02, Ea2, dHr2, UA } = this.params;
+    const Caf = this.cafSpikeActive ? this.baseParams.Caf * 2.5 : this.params.Caf;
     
     const k1 = k0 * Math.exp(-Ea / (R * T));
     const k2 = k02 * Math.exp(-Ea2 / (R * T));
@@ -204,11 +221,15 @@ export class CSTREngine {
     const dCa = (F / V) * (Caf - Ca) - rate1;
     const dCb = (F / V) * (0 - Cb) + rate1 - rate2;
     
+    // Effective UA degradation from pump failure or agitator trip
+    const uaMultiplier = (this.uaFailed ? 0.02 : 1.0) * (this.agitatorTripped ? 0.15 : 1.0);
+    const effectiveUA = UA * uaMultiplier;
+
     const rhoCp = rho * Cp;
     const feed = (F / V) * (Tf - T);
     const mainRxn = (Math.abs(dHr) / rhoCp) * rate1;
     const sideRxn = (Math.abs(dHr2) / rhoCp) * rate2;
-    const cooling = (UA / (rhoCp * V)) * (this.Tc - T);
+    const cooling = (effectiveUA / (rhoCp * V)) * (this.Tc - T);
     
     const dT = feed + mainRxn + sideRxn + cooling;
     
