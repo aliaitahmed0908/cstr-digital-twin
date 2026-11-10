@@ -47,7 +47,7 @@ export const defaultParams = {
 
 export class PIController {
   private Kp: number;
-  private TauI: number; // Integral time (minutes)
+  private TauI: number;
   private outMin: number;
   private outMax: number;
   private integral: number = 0;
@@ -270,7 +270,7 @@ export class CSTREngine {
     };
   }
 
-  public advanceRealTime(dtSeconds: number, simMinutesPerSecond: number, substeps: number): void {
+  public advanceRealTime(dtSeconds: number, simMinutesPerSecond: number, substeps: number = 20): void {
     if (this.faulted) return;
     
     const dtSimMinutes = dtSeconds * simMinutesPerSecond;
