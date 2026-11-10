@@ -47,16 +47,21 @@ export const defaultParams = {
 
 export class PIController {
   private Kp: number;
-  private Ki: number;
+  private TauI: number; // Integral time (minutes)
   private outMin: number;
   private outMax: number;
   private integral: number = 0;
 
-  constructor(Kp: number, Ki: number, outMin: number, outMax: number) {
+  constructor(Kp: number, tauI: number, outMin: number, outMax: number) {
     this.Kp = Kp;
-    this.Ki = Ki;
+    this.TauI = Math.max(1e-4, tauI);
     this.outMin = outMin;
     this.outMax = outMax;
+  }
+
+  public setTunings(Kp: number, tauI: number): void {
+    this.Kp = Kp;
+    this.TauI = Math.max(1e-4, tauI);
   }
 
   public reset(): void {
@@ -66,8 +71,9 @@ export class PIController {
   public compute(setpoint: number, pv: number, dt: number): number {
     const error = setpoint - pv;
     const pTerm = this.Kp * error;
+    const ki = this.Kp / this.TauI;
     
-    let tentativeOut = pTerm + this.Ki * (this.integral + error * dt);
+    let tentativeOut = pTerm + ki * (this.integral + error * dt);
     if (tentativeOut > this.outMax) {
       if (error < 0) this.integral += error * dt;
     } else if (tentativeOut < this.outMin) {
@@ -76,7 +82,7 @@ export class PIController {
       this.integral += error * dt;
     }
 
-    const out = pTerm + this.Ki * this.integral;
+    const out = pTerm + ki * this.integral;
     return Math.max(this.outMin, Math.min(this.outMax, out));
   }
 }
@@ -92,7 +98,6 @@ export class CSTREngine {
   private esdLatched = false;
   private faulted = false;
   
-  // Fault injection states
   private uaFailed = false;
   private agitatorTripped = false;
   private cafSpikeActive = false;
@@ -221,7 +226,6 @@ export class CSTREngine {
     const dCa = (F / V) * (Caf - Ca) - rate1;
     const dCb = (F / V) * (0 - Cb) + rate1 - rate2;
     
-    // Effective UA degradation from pump failure or agitator trip
     const uaMultiplier = (this.uaFailed ? 0.02 : 1.0) * (this.agitatorTripped ? 0.15 : 1.0);
     const effectiveUA = UA * uaMultiplier;
 

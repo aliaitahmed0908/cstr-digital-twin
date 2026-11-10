@@ -36,6 +36,10 @@ export default function App() {
   const [recordStats, setRecordStats] = useState({ count: 0, duration: 0 });
   const [tc, setTc] = useState(defaultParams.Tc);
   
+  // PID Tuning State
+  const [kp, setKp] = useState(2.0);
+  const [tauI, setTauI] = useState(0.6);
+
   // Disturbances & Faults
   const [tfDisturbance, setTfDisturbance] = useState(false);
   const [flowDisturbance, setFlowDisturbance] = useState(false);
@@ -69,6 +73,10 @@ export default function App() {
   useEffect(() => {
     setpointRef.current = setpoint;
   }, [setpoint]);
+
+  useEffect(() => {
+    controllerRef.current.setTunings(kp, tauI);
+  }, [kp, tauI]);
 
   useEffect(() => {
     const engine = engineRef.current;
@@ -756,7 +764,7 @@ export default function App() {
           </Card>
 
           <Card>
-            <SectionLabel>Temperature Control</SectionLabel>
+            <SectionLabel>Temperature Control (APC)</SectionLabel>
 
             {controlsLocked && (
               <div
@@ -803,6 +811,45 @@ export default function App() {
                   disabled={controlsLocked}
                   onChange={(e) => setSetpoint(parseFloat(e.target.value))}
                 />
+
+                {/* MANUAL PID TUNING SANDBOX */}
+                <div style={{ marginTop: 14, paddingTop: 12, borderTop: "1px dashed #1f2733" }}>
+                  <div style={{ fontSize: 11, letterSpacing: 0.5, textTransform: "uppercase", color: "#a78bfa", marginBottom: 8, fontWeight: 600 }}>
+                    PID Tuning Sandbox
+                  </div>
+                  
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 4 }}>
+                    <span style={{ fontSize: 12, color: "#8a94a6" }}>Prop. Gain ($K_p$)</span>
+                    <span className="mono" style={{ fontSize: 14, fontWeight: 700, color: "#3ba8ff" }}>
+                      {kp.toFixed(2)}
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    className="thermo-slider"
+                    min={0.1}
+                    max={10.0}
+                    step={0.1}
+                    value={kp}
+                    onChange={(e) => setKp(parseFloat(e.target.value))}
+                  />
+
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginTop: 10, marginBottom: 4 }}>
+                    <span style={{ fontSize: 12, color: "#8a94a6" }}>Integral Time ($\tau_i$)</span>
+                    <span className="mono" style={{ fontSize: 14, fontWeight: 700, color: "#3ba8ff" }}>
+                      {tauI.toFixed(2)} min
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    className="thermo-slider"
+                    min={0.1}
+                    max={3.0}
+                    step={0.05}
+                    value={tauI}
+                    onChange={(e) => setTauI(parseFloat(e.target.value))}
+                  />
+                </div>
               </div>
             )}
 
