@@ -103,7 +103,7 @@ export default function App() {
         setTc(newTc);
       }
 
-      engine.advanceRealTime(dtSeconds, simMinutesPerSecond, 4);
+      engine.advanceRealTime(dtSeconds, simMinutesPerSecond, 20);
       const { Ca, Cb, T } = engine.getState();
       
       liveTempRef.current = T;
@@ -616,10 +616,10 @@ export default function App() {
           </Card>
 
           <Card>
-            <SectionLabel>Reactor Design Parameters ($\tau = V/F$)</SectionLabel>
+            <SectionLabel>Reactor Design Parameters (tau = V / F)</SectionLabel>
             
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 4 }}>
-              <span style={{ fontSize: 12, color: "#8a94a6" }}>Volume ($V$)</span>
+              <span style={{ fontSize: 12, color: "#8a94a6" }}>Volume (V)</span>
               <span className="mono" style={{ fontSize: 14, fontWeight: 700, color: "#3ba8ff" }}>
                 {volume.toFixed(0)} L
               </span>
@@ -635,7 +635,7 @@ export default function App() {
             />
 
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginTop: 10, marginBottom: 4 }}>
-              <span style={{ fontSize: 12, color: "#8a94a6" }}>Flow Rate ($F$)</span>
+              <span style={{ fontSize: 12, color: "#8a94a6" }}>Flow Rate (F)</span>
               <span className="mono" style={{ fontSize: 14, fontWeight: 700, color: "#3ba8ff" }}>
                 {flowRate.toFixed(0)} L/min
               </span>
@@ -651,7 +651,7 @@ export default function App() {
             />
 
             <div className="mono" style={{ fontSize: 11, color: "#a78bfa", marginTop: 10 }}>
-              Residence Time ($\tau$): {(volume / flowRate).toFixed(2)} min
+              Residence Time (tau): {(volume / flowRate).toFixed(2)} min
             </div>
           </Card>
 
@@ -684,7 +684,7 @@ export default function App() {
           </Card>
 
           <Card>
-            <SectionLabel>Phase Portrait ($T$ vs $C_A$)</SectionLabel>
+            <SectionLabel>Phase Portrait (T vs Ca)</SectionLabel>
             <PhasePortraitChart
               getCa={() => liveCaRef.current}
               getT={() => liveTempRef.current}
@@ -837,7 +837,7 @@ export default function App() {
               >
                 {faulted
                   ? "Numerical fault — use Reset Reactor above to recover"
-                  : "ESD latched — use Acknowledge & Resume above once T ≤ 415 K"}
+                  : "ESD latched — use Acknowledge & Resume above once T <= 415 K"}
               </div>
             )}
 
@@ -874,7 +874,7 @@ export default function App() {
                   </div>
                   
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 4 }}>
-                    <span style={{ fontSize: 12, color: "#8a94a6" }}>Prop. Gain ($K_p$)</span>
+                    <span style={{ fontSize: 12, color: "#8a94a6" }}>Prop. Gain (Kp)</span>
                     <span className="mono" style={{ fontSize: 14, fontWeight: 700, color: "#3ba8ff" }}>
                       {kp.toFixed(2)}
                     </span>
@@ -890,7 +890,7 @@ export default function App() {
                   />
 
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginTop: 10, marginBottom: 4 }}>
-                    <span style={{ fontSize: 12, color: "#8a94a6" }}>Integral Time ($\tau_i$)</span>
+                    <span style={{ fontSize: 12, color: "#8a94a6" }}>Integral Time (tau_i)</span>
                     <span className="mono" style={{ fontSize: 14, fontWeight: 700, color: "#3ba8ff" }}>
                       {tauI.toFixed(2)} min
                     </span>
