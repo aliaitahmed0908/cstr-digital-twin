@@ -47,7 +47,7 @@ export default function App() {
   const [slaveTauI, setSlaveTauI] = useState(0.2);
   const [iae, setIae] = useState(0);
 
-  // Design Parameters (Residence Time V and F)
+  // Design Parameters
   const [volume, setVolume] = useState(defaultParams.V);
   const [flowRate, setFlowRate] = useState(defaultParams.F);
 
@@ -107,9 +107,13 @@ export default function App() {
     slaveControllerRef.current.setTunings(slaveKp, slaveTauI);
   }, [slaveKp, slaveTauI]);
 
-  const resetIae = () => {
+  // FIXED: Properly clear integral windup so it doesn't instantly jump
+  const resetIae = (e?: React.MouseEvent) => {
+    if (e) e.preventDefault();
     iaeRef.current = 0;
     setIae(0);
+    masterControllerRef.current.reset();
+    slaveControllerRef.current.reset();
   };
 
   useEffect(() => {
@@ -128,28 +132,27 @@ export default function App() {
       if (autoModeRef.current && !engine.isEsdTripped()) {
         const { T } = engine.getState();
         
-        // 1. Master PI Controller (Calculates jacket setpoint based on reactor T)
+        // 1. Master PI Controller
         const masterOutputTcSp = masterControllerRef.current.compute(setpointRef.current, T, dtMinutes);
-        
         let commandedTc = masterOutputTcSp;
         
-        // 2. Slave PI Controller (Calculates cooling valve duty based on jacket Tc tracking)
+        // 2. Slave PI Controller
         if (cascadeModeRef.current) {
           commandedTc = slaveControllerRef.current.compute(masterOutputTcSp, jacketTcRef.current, dtMinutes);
         }
         
-        // 3. Simulated Jacket Thermal Lag (First-Order Response)
-        const jacketTau = 0.15; // minutes
+        // 3. Simulated Jacket Thermal Lag
+        const jacketTau = 0.15;
         jacketTcRef.current += (commandedTc - jacketTcRef.current) * (dtMinutes / jacketTau);
         
         engine.setTc(jacketTcRef.current);
         setTc(jacketTcRef.current);
         
-        // 4. Update Performance Metrics
+        // 4. Update IAE
         iaeRef.current += Math.abs(setpointRef.current - T) * dtMinutes;
         setIae(iaeRef.current);
       } else {
-        jacketTcRef.current = engine.getState().T; // Follow reactor when manual/off to prevent integral windup shocks
+        jacketTcRef.current = engine.getState().T; 
       }
 
       engine.advanceRealTime(dtSeconds, simMinutesPerSecond, 20);
@@ -704,7 +707,7 @@ ${cascadeMode ? `*   **Slave PI Tuning:** Kp = ${slaveKp.toFixed(2)}, tau_i = ${
           <Card>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
               <div style={{ fontSize: 11, letterSpacing: 0.6, textTransform: "uppercase", color: "#5b6577", fontWeight: 600 }}>Live Telemetry</div>
-              <button onClick={resetIae} style={{ fontSize: 10, padding: "2px 6px", background: "#1f2733", border: "none", color: "#a78bfa", borderRadius: 4, cursor: "pointer" }}>Reset IAE</button>
+              <button onClick={resetIae} style={{ fontSize: 10, padding: "4px 8px", background: "#1f2733", border: "none", color: "#a78bfa", borderRadius: 4, cursor: "pointer", zIndex: 10, position: "relative" }}>Reset IAE</button>
             </div>
             <Metric label="Concentration, Ca" value={`${telemetry.Ca.toFixed(4)} mol/L`} mono />
             <Metric label="Concentration, Cb" value={`${telemetry.Cb.toFixed(4)} mol/L`} mono />
