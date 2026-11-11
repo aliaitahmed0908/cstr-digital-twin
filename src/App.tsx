@@ -146,8 +146,6 @@ export default function App() {
         
         iaeRef.current += Math.abs(setpointRef.current - T) * dtMinutes;
         setIae(iaeRef.current);
-      } else {
-        jacketTcRef.current = engine.getState().T; 
       }
 
       engine.advanceRealTime(dtSeconds, simMinutesPerSecond, 20);
@@ -233,7 +231,6 @@ export default function App() {
   const stopPreset = () => {
     clearPresetTimeouts();
     setActivePreset(null);
-    // Restore nominal flow rate when stopping preset
     setFlowRate(defaultParams.F);
     engineRef.current.setDesignParam("F", defaultParams.F);
   };
@@ -247,11 +244,6 @@ export default function App() {
     setUaFault(false);
     setAgitatorFault(false);
     setCafFault(false);
-    engineRef.current.setDisturbance("Tf", false);
-    engineRef.current.setDisturbance("F", false);
-    engineRef.current.setFault("ua", false);
-    engineRef.current.setFault("agitator", false);
-    engineRef.current.setFault("caf", false);
     setFlowRate(defaultParams.F);
     engineRef.current.setDesignParam("F", defaultParams.F);
     engineRef.current.resetState(0.5, 350);
