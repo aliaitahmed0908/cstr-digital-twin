@@ -10,6 +10,7 @@ interface ReactorMeshProps {
   jacketColdTemp?: number;
   jacketHotTemp?: number;
   cutawayEnabled?: boolean;
+  agitatorTripped?: boolean; // <-- Added prop to freeze impeller on motor trip
 }
 
 const PARTICLE_COUNT = 220;
@@ -73,6 +74,7 @@ export function ReactorMesh({
   jacketColdTemp = 250,
   jacketHotTemp = 350,
   cutawayEnabled = false,
+  agitatorTripped = false, // Default to false
 }: ReactorMeshProps) {
   const shaderMaterialRef = useRef<THREE.ShaderMaterial>(null);
   const jacketMaterialRef = useRef<THREE.MeshStandardMaterial>(null);
@@ -135,7 +137,9 @@ export function ReactorMesh({
     if (glowRef.current) {
       glowRef.current.intensity = 1 + 3 * t;
     }
-    if (agitatorRef.current) {
+
+    // Freeze impeller rotation immediately if agitator motor is tripped
+    if (agitatorRef.current && !agitatorTripped) {
       const baseSpeed = 1.2;
       const speed = baseSpeed + t * 4.5;
       agitatorRef.current.rotation.y += delta * speed;

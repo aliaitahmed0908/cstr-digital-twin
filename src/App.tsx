@@ -28,7 +28,6 @@ const SENSITIVITY_LABELS: Record<SensitivityKey, string> = {
 export default function App() {
   const engineRef = useRef<CSTREngine>(new CSTREngine(0.5, 350, defaultParams));
   
-  // Controllers for Cascade Architecture
   const masterControllerRef = useRef<PIController>(new PIController(2.0, 0.6, 250, 450));
   const slaveControllerRef = useRef<PIController>(new PIController(5.0, 0.2, 250, 450));
   
@@ -40,18 +39,15 @@ export default function App() {
   const [recordStats, setRecordStats] = useState({ count: 0, duration: 0 });
   const [tc, setTc] = useState(defaultParams.Tc);
   
-  // Control State & IAE Metrics
   const [kp, setKp] = useState(2.0);
   const [tauI, setTauI] = useState(0.6);
   const [slaveKp, setSlaveKp] = useState(5.0);
   const [slaveTauI, setSlaveTauI] = useState(0.2);
   const [iae, setIae] = useState(0);
 
-  // Design Parameters
   const [volume, setVolume] = useState(defaultParams.V);
   const [flowRate, setFlowRate] = useState(defaultParams.F);
 
-  // Disturbances & Faults
   const [tfDisturbance, setTfDisturbance] = useState(false);
   const [flowDisturbance, setFlowDisturbance] = useState(false);
   const [uaFault, setUaFault] = useState(false);
@@ -117,7 +113,6 @@ export default function App() {
 
   useEffect(() => {
     const engine = engineRef.current;
-
     if (engine.getHistory().length === 0) {
       engine.resetState(0.5, 350); 
     }
@@ -130,7 +125,6 @@ export default function App() {
 
       if (autoModeRef.current && !engine.isEsdTripped()) {
         const { T } = engine.getState();
-        
         const masterOutputTcSp = masterControllerRef.current.compute(setpointRef.current, T, dtMinutes);
         let commandedTc = masterOutputTcSp;
         
@@ -148,7 +142,7 @@ export default function App() {
         setIae(iaeRef.current);
       }
 
-      engine.advanceRealTime(dtSeconds, simMinutesPerSecond, 20);
+      engine.advanceRealTime(dtSeconds, simMinutesPerSecond, 20, cascadeModeRef.current);
       const { Ca, Cb, T } = engine.getState();
       
       liveTempRef.current = T;
@@ -233,8 +227,6 @@ export default function App() {
     setActivePreset(null);
     setFlowRate(defaultParams.F);
     engineRef.current.setDesignParam("F", defaultParams.F);
-    
-    // Reset all faults/disturbances
     setUaFault(false);
     engineRef.current.setFault("ua", false);
     setCafFault(false);
@@ -280,6 +272,9 @@ export default function App() {
       engineRef.current.setFault("caf", false);
       setTfDisturbance(false);
       engineRef.current.setDisturbance("Tf", false);
+      
+      setFlowRate(defaultParams.F);
+      engineRef.current.setDesignParam("F", defaultParams.F);
       
       engineRef.current.setTc(300);
       setTc(300);
@@ -345,24 +340,23 @@ export default function App() {
     }
 
     if (key === "runaway") {
-      setFlowRate(defaultParams.F);
-      engineRef.current.setDesignParam("F", defaultParams.F);
+      setFlowRate(0);
+      engineRef.current.setDesignParam("F", 0);
       setAutoMode(false);
       
-      // Cascade failure: Cut cooling + spike concentration + pre-heat feed
       setUaFault(true);
       engineRef.current.setFault("ua", true);
-      setCafFault(true);
-      engineRef.current.setFault("caf", true);
-      setTfDisturbance(true);
-      engineRef.current.setDisturbance("Tf", true);
-
+      
+      setCafFault(false);
+      engineRef.current.setFault("caf", false);
+      setTfDisturbance(false);
+      engineRef.current.setDisturbance("Tf", false);
       setFlowDisturbance(false);
       setAgitatorFault(false);
       engineRef.current.setDisturbance("F", false);
       engineRef.current.setFault("agitator", false);
       
-      engineRef.current.resetState(0.5, 350);
+      engineRef.current.resetState(1.0, 390);
       engineRef.current.setTc(450);
       setTc(450);
       jacketTcRef.current = 450;
@@ -676,7 +670,7 @@ ${cascadeMode ? `*   **Slave PI Tuning:** Kp = ${slaveKp.toFixed(2)}, tau_i = ${
               checked={activePreset === "runaway"}
               onChange={() => handlePresetToggle("runaway")}
               accentColor="#ff5548"
-              tooltip="Forces a severe cascade failure: cuts cooling, spikes feed concentration, and pre-heats the feed to overwhelm the reactor's heat balance."
+              tooltip="Simulates a blocked-valve loss-of-cooling scenario. Traps a full tank of reactant with zero cooling, guaranteeing a runaway past the ESD threshold."
             />
             <div style={{ height: 10 }} />
             <ToggleRow
@@ -1222,6 +1216,7 @@ ${cascadeMode ? `*   **Slave PI Tuning:** Kp = ${slaveKp.toFixed(2)}, tau_i = ${
               coldTemp={300}
               hotTemp={450}
               cutawayEnabled={cutawayOn}
+              agitatorTripped={agitatorFault}
             />
             <ContactShadows position={[0, -1.6, 0]} opacity={0.4} scale={10} blur={2.5} far={4} />
             <Grid
