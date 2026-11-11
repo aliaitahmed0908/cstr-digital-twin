@@ -31,18 +31,18 @@ export const defaultParams = {
   Caf: 1.0,
   Tf: 350.0,
   Tc: 300.0,
-  UA: 50000.0,
+  UA: 420000.0, // Scaled to maintain nominal 350K steady-state heat removal
   rho: 1000.0,
   Cp: 4.18,
   R: 8.314,
   
   k0: 7.2e10,
   Ea: 72750.0,
-  dHr: -50000.0,
+  dHr: -420000.0, // Scaled to provide enough chemical energy to break 440 K
   
   k02: 2.0e10,
   Ea2: 80000.0,
-  dHr2: -30000.0,
+  dHr2: -250000.0,
 };
 
 export class PIController {
@@ -285,12 +285,11 @@ export class CSTREngine {
     const dtStep = dtSimMinutes / substeps;
 
     for (let i = 0; i < substeps; i++) {
-      // Inner loop cascade valve lag dynamics: actualTc chases setpoint Tc
       if (cascadeActive) {
-        const valveLagTimeConstant = 0.05; // Fast inner loop valve response
+        const valveLagTimeConstant = 0.05;
         this.actualTc += (this.Tc - this.actualTc) * (dtStep / valveLagTimeConstant);
       } else {
-        this.actualTc = this.Tc; // Direct coupling
+        this.actualTc = this.Tc; 
       }
 
       this.step(dtStep);
