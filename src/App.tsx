@@ -233,6 +233,8 @@ export default function App() {
     setActivePreset(null);
     setFlowRate(defaultParams.F);
     engineRef.current.setDesignParam("F", defaultParams.F);
+    setUaFault(false);
+    engineRef.current.setFault("ua", false);
   };
 
   const resetEngineToSafeState = () => {
@@ -246,6 +248,7 @@ export default function App() {
     setCafFault(false);
     setFlowRate(defaultParams.F);
     engineRef.current.setDesignParam("F", defaultParams.F);
+    engineRef.current.setFault("ua", false);
     engineRef.current.resetState(0.5, 350);
     engineRef.current.setTc(300);
     setTc(300);
@@ -259,6 +262,8 @@ export default function App() {
     const cleared = engineRef.current.acknowledgeEsd();
     if (cleared) {
       setAutoMode(false);
+      setUaFault(false);
+      engineRef.current.setFault("ua", false);
       engineRef.current.setTc(300);
       setTc(300);
       jacketTcRef.current = 300;
@@ -328,31 +333,31 @@ export default function App() {
       setAutoMode(false);
       setTfDisturbance(false);
       setFlowDisturbance(false);
-      setUaFault(false);
+      setUaFault(true); // Collapse UA so heat cannot escape
       setAgitatorFault(false);
       setCafFault(false);
       engineRef.current.setDisturbance("Tf", false);
       engineRef.current.setDisturbance("F", false);
-      engineRef.current.setFault("ua", false);
+      engineRef.current.setFault("ua", true);
       engineRef.current.setFault("agitator", false);
       engineRef.current.setFault("caf", false);
       engineRef.current.resetState(0.5, 350);
-      engineRef.current.setTc(420);
-      setTc(420);
-      jacketTcRef.current = 420;
+      engineRef.current.setTc(450);
+      setTc(450);
+      jacketTcRef.current = 450;
     }
 
     if (key === "rejection") {
       setFlowRate(defaultParams.F);
       engineRef.current.setDesignParam("F", defaultParams.F);
+      setUaFault(false);
+      engineRef.current.setFault("ua", false);
       setTfDisturbance(false);
       setFlowDisturbance(false);
-      setUaFault(false);
       setAgitatorFault(false);
       setCafFault(false);
       engineRef.current.setDisturbance("Tf", false);
       engineRef.current.setDisturbance("F", false);
-      engineRef.current.setFault("ua", false);
       engineRef.current.setFault("agitator", false);
       engineRef.current.setFault("caf", false);
       engineRef.current.resetState(0.5, 330);
@@ -650,7 +655,7 @@ ${cascadeMode ? `*   **Slave PI Tuning:** Kp = ${slaveKp.toFixed(2)}, tau_i = ${
               checked={activePreset === "runaway"}
               onChange={() => handlePresetToggle("runaway")}
               accentColor="#ff5548"
-              tooltip="Forces the outer jacket hot while cutting effective cooling. Watch how fast heat generation overtakes removal until safety shutdowns trip."
+              tooltip="Forces the outer jacket hot while collapsing cooling, ensuring the reaction spirals out of control until the safety shutdown trips."
             />
             <div style={{ height: 10 }} />
             <ToggleRow
