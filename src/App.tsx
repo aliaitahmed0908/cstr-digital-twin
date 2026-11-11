@@ -634,7 +634,7 @@ ${cascadeMode ? `*   **Slave PI Tuning:** Kp = ${slaveKp.toFixed(2)}, tau_i = ${
           }}
         >
           <Card>
-            <SectionLabel tooltip="Quick-start setups. Click one to instantly load a specific scenario—such as a safe startup, a dangerous heat spike, or an automated test.">
+            <SectionLabel tooltip="Click any button here to load a ready-made scenario. Great for testing how the tank handles cold starts, thermal runaways, or sudden heat shocks.">
               Scenario Presets
             </SectionLabel>
             <ToggleRow
@@ -643,7 +643,7 @@ ${cascadeMode ? `*   **Slave PI Tuning:** Kp = ${slaveKp.toFixed(2)}, tau_i = ${
               checked={activePreset === "cold"}
               onChange={() => handlePresetToggle("cold")}
               accentColor="#3ba8ff"
-              tooltip="A safe mode that cools the reactor right down, putting the chemical reaction to sleep so you can start fresh."
+              tooltip="Chills the tank down so the reaction practically stops. Perfect if you want to test heating things up from scratch."
             />
             <div style={{ height: 10 }} />
             <ToggleRow
@@ -652,7 +652,7 @@ ${cascadeMode ? `*   **Slave PI Tuning:** Kp = ${slaveKp.toFixed(2)}, tau_i = ${
               checked={activePreset === "runaway"}
               onChange={() => handlePresetToggle("runaway")}
               accentColor="#ff5548"
-              tooltip="A stress test! It turns off proper cooling and heats up the outer jacket, showing how a reaction can dangerously spiral out of control if left unmonitored."
+              tooltip="Forces the outer jacket hot while cutting effective cooling. Watch how fast heat generation overtakes removal until safety shutdowns trip."
             />
             <div style={{ height: 10 }} />
             <ToggleRow
@@ -661,12 +661,12 @@ ${cascadeMode ? `*   **Slave PI Tuning:** Kp = ${slaveKp.toFixed(2)}, tau_i = ${
               checked={activePreset === "rejection"}
               onChange={() => handlePresetToggle("rejection")}
               accentColor="#a78bfa"
-              tooltip="Turns on automatic computer control, lets it stabilise, and then hits the tank with a sudden heat wave to see how well the computer fights back."
+              tooltip="Engages automatic control, waits four seconds, and then injects a hot feed surge to see how well the computer fights to hold the setpoint."
             />
           </Card>
 
           <Card>
-            <SectionLabel tooltip="Download buttons to save your session data or export a ready-to-use technical report for university assignments.">
+            <SectionLabel tooltip="Save your raw time-series data as a CSV or grab a markdown summary for university lab write-ups.">
               Data Logging &amp; Report Export
             </SectionLabel>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 10 }}>
@@ -713,12 +713,12 @@ ${cascadeMode ? `*   **Slave PI Tuning:** Kp = ${slaveKp.toFixed(2)}, tau_i = ${
 
           <Card>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-              <SectionLabel tooltip="Live instrument readings showing what is happening inside the reaction tank right now.">
+              <SectionLabel tooltip="Live numbers coming straight from the numerical solver.">
                 Live Telemetry
               </SectionLabel>
               <button
                 onClick={resetIae}
-                title="Clears the accumulated error and resets the controller memory"
+                title="Clears accumulated error and resets controller memory"
                 style={{ fontSize: 10, padding: "4px 8px", background: "#1f2733", border: "none", color: "#a78bfa", borderRadius: 4, cursor: "pointer", zIndex: 10, position: "relative" }}
               >
                 Reset IAE
@@ -728,38 +728,38 @@ ${cascadeMode ? `*   **Slave PI Tuning:** Kp = ${slaveKp.toFixed(2)}, tau_i = ${
               label="Concentration, Ca"
               value={`${telemetry.Ca.toFixed(4)} mol/L`}
               mono
-              tooltip="How much unreacted raw material is floating in the tank. It drops as the chemicals react."
+              tooltip="Molarity of reactant A left inside the tank. It drops as the reaction consumes it."
             />
             <Metric
               label="Concentration, Cb"
               value={`${telemetry.Cb.toFixed(4)} mol/L`}
               mono
-              tooltip="How much of the valuable final product has successfully been created so far."
+              tooltip="Molarity of desired product B currently brewed inside the vessel."
             />
             <Metric
               label="Reactor Temperature, T"
               value={`${telemetry.T.toFixed(2)} K`}
               mono
-              tooltip="The internal temperature of the mixing tank. If it gets too hot, the reaction can spiral out of control."
+              tooltip="The bulk temperature of the reacting liquid mixture."
             />
             <Metric
               label="Conversion"
               value={`${conversion.toFixed(1)} %`}
               mono
-              tooltip="The percentage of raw material that has been successfully converted into product."
+              tooltip="Percentage of incoming reactant A that has reacted."
             />
             <Metric
               label="Selectivity to B"
               value={`${selectivity.toFixed(1)} %`}
               mono
               valueColor={selectivity < 85 ? "#ffb545" : "#eef1f6"}
-              tooltip="Out of all the raw material used up, this tells you what percentage became the good product rather than useless waste."
+              tooltip="Proportion of converted reactant that became product B rather than side products."
             />
             <Metric
               label="Sim Time"
               value={`${telemetry.simTime.toFixed(1)} min`}
               mono
-              tooltip="The elapsed simulated time since the experiment started or was reset."
+              tooltip="Elapsed simulation time since the run began."
             />
             <div style={{ height: 1, background: "#1f2733", margin: "10px 0" }} />
             <Metric
@@ -767,26 +767,26 @@ ${cascadeMode ? `*   **Slave PI Tuning:** Kp = ${slaveKp.toFixed(2)}, tau_i = ${
               value={`${tc.toFixed(1)} K`}
               mono
               valueColor="#3ba8ff"
-              tooltip="The temperature of the cooling jacket wrapped around the tank. It takes a moment to catch up when commands change."
+              tooltip="The thermal temperature of the cooling jacket. It lags slightly behind valve commands due to metal and fluid mass."
             />
             <Metric
               label="Integral Abs. Error (IAE)"
               value={iae.toFixed(2)}
               mono
               valueColor="#a78bfa"
-              tooltip="A performance score measuring how well the automated controller is doing. It adds up how far off the temperature is from your target over time. Lower scores mean better control!"
+              tooltip="Cumulative absolute temperature error over time when auto control is on. Lower means tighter tracking."
             />
           </Card>
 
           <Card>
-            <SectionLabel tooltip="Physical design settings that determine the size of the tank and how quickly liquids flow through it.">
+            <SectionLabel tooltip="Physical sizing parameters determining how long liquid stays in the reactor vessel.">
               Reactor Design Parameters
             </SectionLabel>
             
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 4 }}>
               <span style={{ fontSize: 12, color: "#8a94a6", display: "flex", alignItems: "center" }}>
                 Volume (V)
-                <Info text="The total liquid capacity of the tank in litres. Bigger tanks hold more product, but are harder to cool down in an emergency." />
+                <Info text="The fluid capacity of the tank in litres. Bigger tanks mean longer holding times." />
               </span>
               <span className="mono" style={{ fontSize: 14, fontWeight: 700, color: "#3ba8ff" }}>
                 {volume.toFixed(0)} L
@@ -805,7 +805,7 @@ ${cascadeMode ? `*   **Slave PI Tuning:** Kp = ${slaveKp.toFixed(2)}, tau_i = ${
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginTop: 10, marginBottom: 4 }}>
               <span style={{ fontSize: 12, color: "#8a94a6", display: "flex", alignItems: "center" }}>
                 Flow Rate (F)
-                <Info text="How fast fresh liquid is pumped into the tank (and drained out). High flow rates rush chemicals through before they have time to react." />
+                <Info text="Volumetric flow rate of fluid entering and leaving the tank." />
               </span>
               <span className="mono" style={{ fontSize: 14, fontWeight: 700, color: "#3ba8ff" }}>
                 {flowRate.toFixed(0)} L/min
@@ -823,12 +823,12 @@ ${cascadeMode ? `*   **Slave PI Tuning:** Kp = ${slaveKp.toFixed(2)}, tau_i = ${
 
             <div className="mono" style={{ fontSize: 11, color: "#a78bfa", marginTop: 10, display: "flex", alignItems: "center" }}>
               Residence Time (tau): {(volume / flowRate).toFixed(2)} min
-              <Info text="The average amount of time a liquid droplet spends inside the tank before getting flushed out." />
+              <Info text="Tank volume divided by flow rate (V/F). The average time a molecule stays inside the reactor." />
             </div>
           </Card>
 
           <Card>
-            <SectionLabel tooltip="A visual breakdown showing how raw ingredients turn into helpful products or unwanted side-products.">
+            <SectionLabel tooltip="Visual breakdown of reactant A turning into product B and secondary byproducts.">
               Reaction Pathway
             </SectionLabel>
             <ReactionPathway
@@ -841,14 +841,14 @@ ${cascadeMode ? `*   **Slave PI Tuning:** Kp = ${slaveKp.toFixed(2)}, tau_i = ${
           </Card>
 
           <Card>
-            <SectionLabel tooltip="A live chart comparing heat being produced by the chemical reaction versus heat being removed by the cooling system.">
+            <SectionLabel tooltip="Compares heat generated by the exothermic reaction against heat pulled out by the jacket.">
               Energy Balance
             </SectionLabel>
             <EnergyBalanceChart getTerms={() => energyTermsRef.current} windowSeconds={30} />
           </Card>
 
           <Card>
-            <SectionLabel tooltip="A rolling timeline graph tracking how temperature and chemical concentrations change over the last 30 seconds.">
+            <SectionLabel tooltip="A 30-second rolling graph showing temperature and concentration trends.">
               Transient Response
             </SectionLabel>
             <TelemetryChart
@@ -862,7 +862,7 @@ ${cascadeMode ? `*   **Slave PI Tuning:** Kp = ${slaveKp.toFixed(2)}, tau_i = ${
           </Card>
 
           <Card>
-            <SectionLabel tooltip="A map showing all possible stable or unstable operating points for the reactor. The crossing lines show where the reactor naturally wants to settle.">
+            <SectionLabel tooltip="A state-space stability map. The crossing curves highlight where the system naturally settles or unstable regions lie.">
               Phase Portrait (T vs Ca)
             </SectionLabel>
             <PhasePortraitChart
@@ -881,7 +881,7 @@ ${cascadeMode ? `*   **Slave PI Tuning:** Kp = ${slaveKp.toFixed(2)}, tau_i = ${
           </Card>
 
           <Card>
-            <SectionLabel tooltip="Lets you tweak fundamental chemical properties to see what happens if equipment ages, pipes get dirty, or catalysts wear out.">
+            <SectionLabel tooltip="Tweak kinetic constants to simulate catalyst decay, pipe fouling, or activation energy shifts.">
               Sensitivity Analysis
             </SectionLabel>
             <select
@@ -956,7 +956,7 @@ ${cascadeMode ? `*   **Slave PI Tuning:** Kp = ${slaveKp.toFixed(2)}, tau_i = ${
           </Card>
 
           <Card>
-            <SectionLabel tooltip="Trigger sudden equipment breakdowns or process emergencies to test how well your safety setup handles pressure.">
+            <SectionLabel tooltip="Inject sudden equipment failures to see how the controller handles emergencies.">
               Fault Injection Sandbox
             </SectionLabel>
             <ToggleRow
@@ -965,7 +965,7 @@ ${cascadeMode ? `*   **Slave PI Tuning:** Kp = ${slaveKp.toFixed(2)}, tau_i = ${
               checked={uaFault}
               onChange={toggleUaFault}
               accentColor="#ff5548"
-              tooltip="Simulates the cooling pump breaking down. The cooling jacket can no longer pull heat away from the reactor tank."
+              tooltip="Simulates coolant pump failure. Jacket heat transfer drops near zero."
             />
             <div style={{ height: 10 }} />
             <ToggleRow
@@ -974,7 +974,7 @@ ${cascadeMode ? `*   **Slave PI Tuning:** Kp = ${slaveKp.toFixed(2)}, tau_i = ${
               checked={agitatorFault}
               onChange={toggleAgitatorFault}
               accentColor="#ffb545"
-              tooltip="Simulates the stirring paddle stopping. Without mixing, hot spots form and chemical efficiency crashes."
+              tooltip="Stops the stirrer. Without mixing, heat transfer and conversion drop sharply."
             />
             <div style={{ height: 10 }} />
             <ToggleRow
@@ -983,12 +983,12 @@ ${cascadeMode ? `*   **Slave PI Tuning:** Kp = ${slaveKp.toFixed(2)}, tau_i = ${
               checked={cafFault}
               onChange={toggleCafFault}
               accentColor="#3ba8ff"
-              tooltip="Simulates an accidental surge of extra-strong chemicals pumped into the tank, causing a sudden burst of heat."
+              tooltip="Sudden surge in incoming reactant concentration, releasing extra heat."
             />
           </Card>
 
           <Card>
-            <SectionLabel tooltip="Apply ongoing environmental changes to test how stable the reactor is against everyday fluctuations.">
+            <SectionLabel tooltip="Apply external process shifts to test controller rejection.">
               Sustained Disturbances
             </SectionLabel>
             <ToggleRow
@@ -997,7 +997,7 @@ ${cascadeMode ? `*   **Slave PI Tuning:** Kp = ${slaveKp.toFixed(2)}, tau_i = ${
               checked={tfDisturbance}
               onChange={toggleTfDisturbance}
               accentColor="#ff6b52"
-              tooltip="The incoming raw liquid arrives significantly hotter than normal (+40°C), testing the cooling system."
+              tooltip="Raises incoming feed temperature by 40 K."
             />
             <div style={{ height: 10 }} />
             <ToggleRow
@@ -1006,12 +1006,12 @@ ${cascadeMode ? `*   **Slave PI Tuning:** Kp = ${slaveKp.toFixed(2)}, tau_i = ${
               checked={flowDisturbance}
               onChange={toggleFlowDisturbance}
               accentColor="#3ba8ff"
-              tooltip="The supply pump speeds up by 40%, forcing liquid through much faster than planned."
+              tooltip="Increases feed flow rate by 40 L/min."
             />
           </Card>
 
           <Card>
-            <SectionLabel tooltip="Advanced Process Control. Computer systems that automatically adjust cooling valves to keep the reactor at your exact target temperature without human help.">
+            <SectionLabel tooltip="Advanced process control settings. Automated loops that adjust coolant temperature to hold target metrics.">
               Temperature Control (APC)
             </SectionLabel>
 
@@ -1040,7 +1040,7 @@ ${cascadeMode ? `*   **Slave PI Tuning:** Kp = ${slaveKp.toFixed(2)}, tau_i = ${
               checked={autoMode}
               onChange={() => !controlsLocked && setAutoMode((v) => !v)}
               accentColor="#a78bfa"
-              tooltip="Turn this on to let the computer take the wheel and automatically adjust coolant temperature to hit your target."
+              tooltip="Lets the PI controller automatically adjust jacket temperature to match your setpoint."
             />
 
             {autoMode && (
@@ -1051,14 +1051,14 @@ ${cascadeMode ? `*   **Slave PI Tuning:** Kp = ${slaveKp.toFixed(2)}, tau_i = ${
                   checked={cascadeMode}
                   onChange={() => setCascadeMode((v) => !v)}
                   accentColor="#3ba8ff"
-                  tooltip="An advanced setup using two nested computer loops. One figures out the ideal jacket temperature, and a second fast loop drives the actual coolant valve to reach it quickly."
+                  tooltip="Uses a master reactor loop feeding a secondary jacket loop for faster disturbance rejection."
                 />
 
                 <div style={{ marginTop: 14 }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 8 }}>
                     <span style={{ fontSize: 12.5, color: "#8a94a6", display: "flex", alignItems: "center" }}>
                       Setpoint T
-                      <Info text="The target temperature you want the reactor core to stay at." />
+                      <Info text="Target temperature for the reactor core." />
                     </span>
                     <span className="mono" style={{ fontSize: 18, fontWeight: 700, color: "#a78bfa" }}>
                       {setpoint.toFixed(1)} K
@@ -1079,13 +1079,13 @@ ${cascadeMode ? `*   **Slave PI Tuning:** Kp = ${slaveKp.toFixed(2)}, tau_i = ${
                 <div style={{ marginTop: 14, paddingTop: 12, borderTop: "1px dashed #1f2733" }}>
                   <div style={{ fontSize: 11, letterSpacing: 0.5, textTransform: "uppercase", color: "#a78bfa", marginBottom: 8, fontWeight: 600, display: "flex", alignItems: "center" }}>
                     Master PI (Reactor T)
-                    <Info text="The main controller settings that decide how aggressively the computer reacts when the reactor temperature wanders off target." />
+                    <Info text="Primary PI tuning parameters for reactor temperature." />
                   </div>
                   
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 4 }}>
                     <span style={{ fontSize: 12, color: "#8a94a6", display: "flex", alignItems: "center" }}>
                       Prop. Gain (Kp)
-                      <Info text="Proportional Gain. Controls how hard the system reacts immediately when an error appears. Too high makes it jumpy; too low makes it sluggish." />
+                      <Info text="Proportional gain for the master controller." />
                     </span>
                     <span className="mono" style={{ fontSize: 14, fontWeight: 700, color: "#3ba8ff" }}>
                       {kp.toFixed(2)}
@@ -1104,7 +1104,7 @@ ${cascadeMode ? `*   **Slave PI Tuning:** Kp = ${slaveKp.toFixed(2)}, tau_i = ${
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginTop: 10, marginBottom: 4 }}>
                     <span style={{ fontSize: 12, color: "#8a94a6", display: "flex", alignItems: "center" }}>
                       Integral Time (tau_i)
-                      <Info text="Integral Time. Helps wipe out stubborn, long-term temperature drift over time." />
+                      <Info text="Integral time for eliminating steady-state offset." />
                     </span>
                     <span className="mono" style={{ fontSize: 14, fontWeight: 700, color: "#3ba8ff" }}>
                       {tauI.toFixed(2)} min
@@ -1125,7 +1125,7 @@ ${cascadeMode ? `*   **Slave PI Tuning:** Kp = ${slaveKp.toFixed(2)}, tau_i = ${
                   <div style={{ marginTop: 14, paddingTop: 12, borderTop: "1px dashed #1f2733", background: "rgba(59, 168, 255, 0.05)", padding: "10px", borderRadius: 8 }}>
                     <div style={{ fontSize: 11, color: "#3ba8ff", marginBottom: 8, fontWeight: 600, display: "flex", alignItems: "center" }}>
                       Slave PI (Jacket Tc)
-                      <Info text="Settings for the inner loop that specifically focuses on stabilising the cooling jacket temperature quickly." />
+                      <Info text="Inner loop tuning for jacket temperature tracking." />
                     </div>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 4 }}>
                       <span style={{ fontSize: 12, color: "#8a94a6" }}>Slave Prop. Gain (Kp)</span>
@@ -1147,7 +1147,7 @@ ${cascadeMode ? `*   **Slave PI Tuning:** Kp = ${slaveKp.toFixed(2)}, tau_i = ${
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 10 }}>
               <span style={{ fontSize: 12.5, color: "#8a94a6", display: "flex", alignItems: "center" }}>
                 {autoMode ? (cascadeMode ? "Commanded Jacket Tc" : "Tc (controller output)") : "Setpoint Tc"}
-                <Info text="The temperature of the coolant fluid surrounding the reactor tank. You adjust this manually when Auto mode is turned off." />
+                <Info text="Coolant jacket temperature setpoint." />
               </span>
               <span className="mono" style={{ fontSize: 20, fontWeight: 700 }}>
                 {tc.toFixed(1)} K
@@ -1177,7 +1177,7 @@ ${cascadeMode ? `*   **Slave PI Tuning:** Kp = ${slaveKp.toFixed(2)}, tau_i = ${
               checked={cutawayOn}
               onChange={() => setCutawayOn((v) => !v)}
               accentColor="#3ba8ff"
-              tooltip="Slices the 3D reactor model open so you can see the liquid mixing inside."
+              tooltip="Slices open the 3D model to reveal internal mixing."
             />
           </Card>
         </div>
@@ -1234,7 +1234,7 @@ ${cascadeMode ? `*   **Slave PI Tuning:** Kp = ${slaveKp.toFixed(2)}, tau_i = ${
   );
 }
 
-// === INTERACTIVE EDUCATIONAL TOOLTIP COMPONENT (Repositioned Below to Prevent Top Clipping) ===
+// === INTERACTIVE EDUCATIONAL TOOLTIP COMPONENT ===
 function Info({ text }: { text: string }) {
   const [isOpen, setIsOpen] = useState(false);
   const containerRef = useRef<HTMLSpanElement>(null);
@@ -1286,7 +1286,7 @@ function Info({ text }: { text: string }) {
           className="fade-in"
           style={{
             position: "absolute",
-            top: "100%", // Positioned below the icon so top elements don't get clipped
+            top: "100%",
             left: "50%",
             transform: "translateX(-50%)",
             marginTop: 8,
@@ -1310,7 +1310,6 @@ function Info({ text }: { text: string }) {
           }}
         >
           {text}
-          {/* Small triangle pointing upward */}
           <div style={{
             position: "absolute",
             bottom: "100%",
