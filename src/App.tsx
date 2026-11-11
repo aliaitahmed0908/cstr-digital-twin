@@ -107,7 +107,6 @@ export default function App() {
     slaveControllerRef.current.setTunings(slaveKp, slaveTauI);
   }, [slaveKp, slaveTauI]);
 
-  // Properly clear integral windup so it doesn't instantly jump
   const resetIae = (e?: React.MouseEvent) => {
     if (e) e.preventDefault();
     iaeRef.current = 0;
@@ -132,23 +131,19 @@ export default function App() {
       if (autoModeRef.current && !engine.isEsdTripped()) {
         const { T } = engine.getState();
         
-        // 1. Master PI Controller
         const masterOutputTcSp = masterControllerRef.current.compute(setpointRef.current, T, dtMinutes);
         let commandedTc = masterOutputTcSp;
         
-        // 2. Slave PI Controller
         if (cascadeModeRef.current) {
           commandedTc = slaveControllerRef.current.compute(masterOutputTcSp, jacketTcRef.current, dtMinutes);
         }
         
-        // 3. Simulated Jacket Thermal Lag
         const jacketTau = 0.15;
         jacketTcRef.current += (commandedTc - jacketTcRef.current) * (dtMinutes / jacketTau);
         
         engine.setTc(jacketTcRef.current);
         setTc(jacketTcRef.current);
         
-        // 4. Update IAE
         iaeRef.current += Math.abs(setpointRef.current - T) * dtMinutes;
         setIae(iaeRef.current);
       } else {
@@ -238,6 +233,9 @@ export default function App() {
   const stopPreset = () => {
     clearPresetTimeouts();
     setActivePreset(null);
+    // Restore nominal flow rate when stopping preset
+    setFlowRate(defaultParams.F);
+    engineRef.current.setDesignParam("F", defaultParams.F);
   };
 
   const resetEngineToSafeState = () => {
@@ -254,6 +252,8 @@ export default function App() {
     engineRef.current.setFault("ua", false);
     engineRef.current.setFault("agitator", false);
     engineRef.current.setFault("caf", false);
+    setFlowRate(defaultParams.F);
+    engineRef.current.setDesignParam("F", defaultParams.F);
     engineRef.current.resetState(0.5, 350);
     engineRef.current.setTc(300);
     setTc(300);
@@ -323,14 +323,16 @@ export default function App() {
       engineRef.current.setFault("agitator", false);
       engineRef.current.setFault("caf", false);
       engineRef.current.resetState(1.0, 300);
-      engineRef.current.setTc(300);
-      setTc(300);
-      jacketTcRef.current = 300;
-      setFlowRate(defaultParams.F);
-      engineRef.current.setDesignParam("F", defaultParams.F);
+      engineRef.current.setTc(250);
+      setTc(250);
+      jacketTcRef.current = 250;
+      setFlowRate(0);
+      engineRef.current.setDesignParam("F", 0);
     }
 
     if (key === "runaway") {
+      setFlowRate(defaultParams.F);
+      engineRef.current.setDesignParam("F", defaultParams.F);
       setAutoMode(false);
       setTfDisturbance(false);
       setFlowDisturbance(false);
@@ -349,6 +351,8 @@ export default function App() {
     }
 
     if (key === "rejection") {
+      setFlowRate(defaultParams.F);
+      engineRef.current.setDesignParam("F", defaultParams.F);
       setTfDisturbance(false);
       setFlowDisturbance(false);
       setUaFault(false);
@@ -641,11 +645,11 @@ ${cascadeMode ? `*   **Slave PI Tuning:** Kp = ${slaveKp.toFixed(2)}, tau_i = ${
             </SectionLabel>
             <ToggleRow
               label="Cold Start"
-              detail={activePreset === "cold" ? "Engaged · Tc = 300 K" : "Safe baseline"}
+              detail={activePreset === "cold" ? "Engaged · Tc = 250 K, F = 0" : "Safe baseline"}
               checked={activePreset === "cold"}
               onChange={() => handlePresetToggle("cold")}
               accentColor="#3ba8ff"
-              tooltip="Chills the tank down so the reaction practically stops. Perfect if you want to test heating things up from scratch."
+              tooltip="Chills the tank down and pauses feed flow so the reaction completely stops. Perfect for testing heating from a dead stop."
             />
             <div style={{ height: 10 }} />
             <ToggleRow
@@ -816,7 +820,7 @@ ${cascadeMode ? `*   **Slave PI Tuning:** Kp = ${slaveKp.toFixed(2)}, tau_i = ${
             <input
               type="range"
               className="thermo-slider"
-              min={20}
+              min={0}
               max={250}
               step={5}
               value={flowRate}
@@ -824,7 +828,7 @@ ${cascadeMode ? `*   **Slave PI Tuning:** Kp = ${slaveKp.toFixed(2)}, tau_i = ${
             />
 
             <div className="mono" style={{ fontSize: 11, color: "#a78bfa", marginTop: 10, display: "flex", alignItems: "center" }}>
-              Residence Time (tau): {(volume / flowRate).toFixed(2)} min
+              Residence Time (tau): {flowRate > 0 ? (volume / flowRate).toFixed(2) : "infinity"} min
               <Info text="Tank volume divided by flow rate (V/F). The average time a molecule stays inside the reactor." />
             </div>
           </Card>
@@ -1236,7 +1240,6 @@ ${cascadeMode ? `*   **Slave PI Tuning:** Kp = ${slaveKp.toFixed(2)}, tau_i = ${
   );
 }
 
-// === INTERACTIVE EDUCATIONAL TOOLTIP COMPONENT ===
 function Info({ text }: { text: string }) {
   const [isOpen, setIsOpen] = useState(false);
   const containerRef = useRef<HTMLSpanElement>(null);
