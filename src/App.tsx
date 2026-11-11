@@ -326,6 +326,8 @@ export default function App() {
       engineRef.current.setTc(300);
       setTc(300);
       jacketTcRef.current = 300;
+      setFlowRate(defaultParams.F);
+      engineRef.current.setDesignParam("F", defaultParams.F);
     }
 
     if (key === "runaway") {
