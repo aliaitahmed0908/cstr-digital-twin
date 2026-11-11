@@ -634,7 +634,7 @@ ${cascadeMode ? `*   **Slave PI Tuning:** Kp = ${slaveKp.toFixed(2)}, tau_i = ${
           }}
         >
           <Card>
-            <SectionLabel tooltip="Quick-start setups. Click one to instantly load a specific scenario—like a safe startup, a dangerous heat spike, or an automated test.">
+            <SectionLabel tooltip="Quick-start setups. Click one to instantly load a specific scenario—such as a safe startup, a dangerous heat spike, or an automated test.">
               Scenario Presets
             </SectionLabel>
             <ToggleRow
@@ -661,12 +661,12 @@ ${cascadeMode ? `*   **Slave PI Tuning:** Kp = ${slaveKp.toFixed(2)}, tau_i = ${
               checked={activePreset === "rejection"}
               onChange={() => handlePresetToggle("rejection")}
               accentColor="#a78bfa"
-              tooltip="Turns on automatic computer control, lets it stabilize, and then hits the tank with a sudden heat wave to see how well the computer fights back."
+              tooltip="Turns on automatic computer control, lets it stabilise, and then hits the tank with a sudden heat wave to see how well the computer fights back."
             />
           </Card>
 
           <Card>
-            <SectionLabel tooltip="Download buttons to save your session data or export a ready-to-use technical report for school assignments.">
+            <SectionLabel tooltip="Download buttons to save your session data or export a ready-to-use technical report for university assignments.">
               Data Logging &amp; Report Export
             </SectionLabel>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 10 }}>
@@ -774,7 +774,7 @@ ${cascadeMode ? `*   **Slave PI Tuning:** Kp = ${slaveKp.toFixed(2)}, tau_i = ${
               value={iae.toFixed(2)}
               mono
               valueColor="#a78bfa"
-              tooltip="A score measuring how well the automated controller is doing. It adds up how far off the temperature is from your target over time. Lower scores mean better control!"
+              tooltip="A performance score measuring how well the automated controller is doing. It adds up how far off the temperature is from your target over time. Lower scores mean better control!"
             />
           </Card>
 
@@ -1125,7 +1125,7 @@ ${cascadeMode ? `*   **Slave PI Tuning:** Kp = ${slaveKp.toFixed(2)}, tau_i = ${
                   <div style={{ marginTop: 14, paddingTop: 12, borderTop: "1px dashed #1f2733", background: "rgba(59, 168, 255, 0.05)", padding: "10px", borderRadius: 8 }}>
                     <div style={{ fontSize: 11, color: "#3ba8ff", marginBottom: 8, fontWeight: 600, display: "flex", alignItems: "center" }}>
                       Slave PI (Jacket Tc)
-                      <Info text="Settings for the inner loop that specifically focuses on stabilizing the cooling jacket temperature quickly." />
+                      <Info text="Settings for the inner loop that specifically focuses on stabilising the cooling jacket temperature quickly." />
                     </div>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 4 }}>
                       <span style={{ fontSize: 12, color: "#8a94a6" }}>Slave Prop. Gain (Kp)</span>
