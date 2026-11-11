@@ -233,8 +233,14 @@ export default function App() {
     setActivePreset(null);
     setFlowRate(defaultParams.F);
     engineRef.current.setDesignParam("F", defaultParams.F);
+    
+    // Reset all faults/disturbances
     setUaFault(false);
     engineRef.current.setFault("ua", false);
+    setCafFault(false);
+    engineRef.current.setFault("caf", false);
+    setTfDisturbance(false);
+    engineRef.current.setDisturbance("Tf", false);
   };
 
   const resetEngineToSafeState = () => {
@@ -248,7 +254,13 @@ export default function App() {
     setCafFault(false);
     setFlowRate(defaultParams.F);
     engineRef.current.setDesignParam("F", defaultParams.F);
+    
+    engineRef.current.setDisturbance("Tf", false);
+    engineRef.current.setDisturbance("F", false);
     engineRef.current.setFault("ua", false);
+    engineRef.current.setFault("agitator", false);
+    engineRef.current.setFault("caf", false);
+    
     engineRef.current.resetState(0.5, 350);
     engineRef.current.setTc(300);
     setTc(300);
@@ -264,6 +276,11 @@ export default function App() {
       setAutoMode(false);
       setUaFault(false);
       engineRef.current.setFault("ua", false);
+      setCafFault(false);
+      engineRef.current.setFault("caf", false);
+      setTfDisturbance(false);
+      engineRef.current.setDisturbance("Tf", false);
+      
       engineRef.current.setTc(300);
       setTc(300);
       jacketTcRef.current = 300;
@@ -331,16 +348,20 @@ export default function App() {
       setFlowRate(defaultParams.F);
       engineRef.current.setDesignParam("F", defaultParams.F);
       setAutoMode(false);
-      setTfDisturbance(false);
-      setFlowDisturbance(false);
-      setUaFault(true); // Collapse UA so heat cannot escape
-      setAgitatorFault(false);
-      setCafFault(false);
-      engineRef.current.setDisturbance("Tf", false);
-      engineRef.current.setDisturbance("F", false);
+      
+      // Cascade failure: Cut cooling + spike concentration + pre-heat feed
+      setUaFault(true);
       engineRef.current.setFault("ua", true);
+      setCafFault(true);
+      engineRef.current.setFault("caf", true);
+      setTfDisturbance(true);
+      engineRef.current.setDisturbance("Tf", true);
+
+      setFlowDisturbance(false);
+      setAgitatorFault(false);
+      engineRef.current.setDisturbance("F", false);
       engineRef.current.setFault("agitator", false);
-      engineRef.current.setFault("caf", false);
+      
       engineRef.current.resetState(0.5, 350);
       engineRef.current.setTc(450);
       setTc(450);
@@ -352,14 +373,14 @@ export default function App() {
       engineRef.current.setDesignParam("F", defaultParams.F);
       setUaFault(false);
       engineRef.current.setFault("ua", false);
+      setCafFault(false);
+      engineRef.current.setFault("caf", false);
       setTfDisturbance(false);
+      engineRef.current.setDisturbance("Tf", false);
       setFlowDisturbance(false);
       setAgitatorFault(false);
-      setCafFault(false);
-      engineRef.current.setDisturbance("Tf", false);
       engineRef.current.setDisturbance("F", false);
       engineRef.current.setFault("agitator", false);
-      engineRef.current.setFault("caf", false);
       engineRef.current.resetState(0.5, 330);
       setSetpoint(330);
       setAutoMode(true);
@@ -655,7 +676,7 @@ ${cascadeMode ? `*   **Slave PI Tuning:** Kp = ${slaveKp.toFixed(2)}, tau_i = ${
               checked={activePreset === "runaway"}
               onChange={() => handlePresetToggle("runaway")}
               accentColor="#ff5548"
-              tooltip="Forces the outer jacket hot while collapsing cooling, ensuring the reaction spirals out of control until the safety shutdown trips."
+              tooltip="Forces a severe cascade failure: cuts cooling, spikes feed concentration, and pre-heats the feed to overwhelm the reactor's heat balance."
             />
             <div style={{ height: 10 }} />
             <ToggleRow
